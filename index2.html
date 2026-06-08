@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ModasNT — Dashboard Operacional</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg-void: #050508;
+    --bg-panel: #0a0b0f;
+    --bg-card: #0f1016;
+    --bg-card2: #13141b;
+    --border: #1c1e2a;
+    --border-glow: #2a2d3e;
+
+    --cyan: #00f5ff;
+    --cyan-dim: #00c4cc;
+    --cyan-ghost: rgba(0,245,255,0.08);
+    --magenta: #ff00aa;
+    --magenta-dim: #cc0088;
+    --magenta-ghost: rgba(255,0,170,0.08);
+    --green: #00ff88;
+    --green-dim: #00cc6a;
+    --green-ghost: rgba(0,255,136,0.08);
+    --yellow: #ffcc00;
+    --yellow-ghost: rgba(255,204,0,0.08);
+    --orange: #ff6600;
+
+    --text: #e8eaf0;
+    --text-dim: #7a7f96;
+    --text-ghost: #3a3f56;
+
+    --font-display: 'Syne', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    /* sucursales */
+    --s0: #00f5ff;
+    --s1: #ff00aa;
+    --s2: #00ff88;
+    --s3: #ffcc00;
+    --s4: #ff6600;
+    --s5: #aa55ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg-void);
+    color: var(--text);
+    font-family: var(--font-display);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── GRID NOISE BACKGROUND ── */
+  body::before {
+    content:'';
+    position:fixed; inset:0; z-index:0;
+    background-image:
+      linear-gradient(rgba(0,245,255,0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,245,255,0.015) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events:none;
+  }
+
+  /* ── TOP SCANLINE ── */
+  body::after {
+    content:'';
+    position:fixed; top:0; left:0; right:0; height:2px; z-index:999;
+    background: linear-gradient(90deg, transparent, var(--cyan), var(--magenta), var(--green), transparent);
+    animation: scanbar 4s linear infinite;
+  }
+  @keyframes scanbar {
+    0%   { opacity:1; transform:scaleX(0); transform-origin:left; }
+    50%  { opacity:1; transform:scaleX(1); transform-origin:left; }
+    50.01% { transform-origin:right; }
+    100% { opacity:0.3; transform:scaleX(0); transform-origin:right; }
+  }
+
+  /* ── LAYOUT ── */
+  .shell { position:relative; z-index:1; max-width:1440px; margin:0 auto; padding:0 24px 40px; }
+
+  /* ── HEADER ── */
+  header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 20px 0 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom:28px;
+  }
+  .logo-block { display:flex; align-items:center; gap:14px; }
+  .logo-badge {
+    width:44px; height:44px; border-radius:8px;
+    background: linear-gradient(135deg, var(--magenta), var(--cyan));
+    display:flex; align-items:center; justify-content:center;
+    font-family: var(--font-mono); font-weight:700; font-size:14px;
+    color:#000; letter-spacing:-1px;
+    box-shadow: 0 0 20px rgba(255,0,170,0.4);
+  }
+  .logo-text { font-size:22px; font-weight:800; letter-spacing:-0.5px; }
+  .logo-text span { color:var(--cyan); }
+  .logo-sub { font-family:var(--font-mono); font-size:10px; color:var(--text-dim); margin-top:2px; letter-spacing:2px; }
+
+  .header-right { display:flex; align-items:center; gap:16px; }
+
+  .status-dot {
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--font-mono); font-size:10px; color:var(--text-dim);
+  }
+  .status-dot::before {
+    content:''; width:7px; height:7px; border-radius:50%;
+    background:var(--green); box-shadow:0 0 8px var(--green);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .now-label {
+    font-family:var(--font-mono); font-size:11px; color:var(--text-dim);
+    background:var(--bg-card); border:1px solid var(--border); border-radius:6px;
+    padding:6px 12px;
+  }
+
+  /* ── CONFIG BANNER ── */
+  .config-banner {
+    background: linear-gradient(135deg, rgba(255,0,170,0.06), rgba(0,245,255,0.06));
+    border: 1px solid rgba(255,0,170,0.2);
+    border-radius:10px; padding:14px 20px;
+    margin-bottom:24px;
+    display:flex; align-items:center; gap:12px;
+    font-family:var(--font-mono); font-size:11px;
+  }
+  .config-banner .icon { font-size:18px; }
+  .config-banner strong { color:var(--yellow); }
+  .config-banner a { color:var(--cyan); text-decoration:none; }
+  .config-banner a:hover { text-decoration:underline; }
+
+  /* ── CONTROLS BAR ── */
+  .controls-bar {
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    margin-bottom:28px;
+  }
+  .ctrl-label { font-family:var(--font-mono); font-size:10px; color:var(--text-dim); letter-spacing:1px; }
+
+  .range-tabs { display:flex; gap:4px; }
+  .tab-btn {
+    background:var(--bg-card); border:1px solid var(--border);
+    color:var(--text-dim); font-family:var(--font-mono); font-size:11px;
+    padding:7px 16px; border-radius:6px; cursor:pointer;
+    transition: all .2s;
+  }
+  .tab-btn:hover { border-color:var(--cyan-dim); color:var(--cyan); }
+  .tab-btn.active {
+    background:var(--cyan-ghost); border-color:var(--cyan);
+    color:var(--cyan); box-shadow:0 0 12px rgba(0,245,255,0.2);
+  }
+
+  .date-input {
+    background:var(--bg-card); border:1px solid var(--border);
+    color:var(--text); font-family:var(--font-mono); font-size:11px;
+    padding:7px 12px; border-radius:6px; outline:none;
+    transition: border-color .2s;
+  }
+  .date-input:focus { border-color:var(--cyan); }
+
+  .ctrl-sep { width:1px; height:28px; background:var(--border); margin:0 4px; }
+
+  .refresh-btn {
+    background:transparent; border:1px solid var(--border-glow);
+    color:var(--text-dim); font-family:var(--font-mono); font-size:11px;
+    padding:7px 14px; border-radius:6px; cursor:pointer;
+    display:flex; align-items:center; gap:6px;
+    transition: all .2s;
+  }
+  .refresh-btn:hover { border-color:var(--green); color:var(--green); }
+  .refresh-btn .spin { display:inline-block; transition:transform .3s; }
+  .refresh-btn:hover .spin { transform:rotate(180deg); }
+
+  /* ── KPI STRIP ── */
+  .kpi-strip {
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:12px; margin-bottom:28px;
+  }
+  .kpi-card {
+    background:var(--bg-card); border:1px solid var(--border);
+    border-radius:12px; padding:18px 20px;
+    position:relative; overflow:hidden;
+    transition: transform .2s, border-color .2s;
+  }
+  .kpi-card:hover { transform:translateY(-2px); }
+  .kpi-card::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  }
+  .kpi-card.c { --clr:var(--cyan); }
+  .kpi-card.m { --clr:var(--magenta); }
+  .kpi-card.g { --clr:var(--green); }
+  .kpi-card.y { --clr:var(--yellow); }
+  .kpi-card.o { --clr:var(--orange); }
+
+  .kpi-card:hover { border-color: var(--clr,var(--cyan)); box-shadow:0 0 20px rgba(var(--clr),0.1); }
+  .kpi-card::before { background: var(--clr,var(--cyan)); box-shadow:0 0 10px var(--clr,var(--cyan)); }
+
+  .kpi-label {
+    font-family:var(--font-mono); font-size:9px; letter-spacing:2px;
+    color:var(--text-dim); text-transform:uppercase; margin-bottom:10px;
+  }
+  .kpi-val {
+    font-size:26px; font-weight:800; letter-spacing:-1px;
+    color:var(--clr,var(--text));
+    text-shadow:0 0 20px var(--clr,transparent);
+  }
+  .kpi-val sup { font-size:13px; font-weight:400; opacity:0.7; }
+  .kpi-sub {
+    font-family:var(--font-mono); font-size:10px; color:var(--text-dim);
+    margin-top:6px; display:flex; align-items:center; gap:4px;
+  }
+  .kpi-arrow { font-size:12px; }
+  .up { color:var(--green); }
+  .dn { color:var(--magenta); }
+
+  /* ── MAIN GRID ── */
+  .main-grid {
+    display:grid;
+    grid-template-columns: 1fr 380px;
+    gap:20px;
+    margin-bottom:20px;
+  }
+  @media(max-width:1100px){ .main-grid{grid-template-columns:1fr;} }
+
+  /* ── PANELS ── */
+  .panel {
+    background:var(--bg-card); border:1px solid var(--border);
+    border-radius:14px; overflow:hidden;
+  }
+  .panel-head {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 20px;
+    border-bottom:1px solid var(--border);
+  }
+  .panel-title {
+    font-size:13px; font-weight:700; letter-spacing:0.5px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .panel-title .dot {
+    width:8px; height:8px; border-radius:50%;
+    background:var(--clr,var(--cyan));
+    box-shadow:0 0 8px var(--clr,var(--cyan));
+  }
+  .panel-body { padding:20px; }
+
+  .panel-meta {
+    font-family:var(--font-mono); font-size:10px; color:var(--text-dim);
+    display:flex; align-items:center; gap:8px;
+  }
+  .tag {
+    background:var(--bg-card2); border:1px solid var(--border);
+    border-radius:4px; padding:2px 8px;
+    font-family:var(--font-mono); font-size:9px; letter-spacing:1px;
+    color:var(--text-dim);
+  }
+
+  /* ── CHART PANEL ── */
+  .chart-wrap { position:relative; height:300px; }
+
+  /* sucursal legend */
+  .sucursal-legend {
+    display:flex; gap:12px; flex-wrap:wrap; margin-top:16px;
+  }
+  .leg-item {
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--font-mono); font-size:10px; color:var(--text-dim);
+    cursor:pointer; transition: color .2s;
+  }
+  .leg-item:hover { color:var(--text); }
+  .leg-dot {
+    width:10px; height:10px; border-radius:2px;
+    box-shadow:0 0 6px currentColor;
+  }
+
+  /* ── BOTTOM GRID ── */
+  .bottom-grid {
+    display:grid; grid-template-columns:1fr 1fr; gap:20px;
+  }
+  @media(max-width:900px){ .bottom-grid{grid-template-columns:1fr;} }
+
+  /* ── TABLE ── */
+  .data-table { width:100%; border-collapse:collapse; }
+  .data-table th {
+    font-family:var(--font-mono); font-size:9px; letter-spacing:1.5px;
+    color:var(--text-dim); text-transform:uppercase;
+    padding:8px 12px; text-align:left;
+    border-bottom:1px solid var(--border);
+  }
+  .data-table td {
+    padding:10px 12px; font-size:12px;
+    border-bottom:1px solid rgba(28,30,42,0.5);
+    transition: background .15s;
+  }
+  .data-table tr:hover td { background:var(--bg-card2); }
+  .data-table tr:last-child td { border-bottom:none; }
+
+  .mono { font-family:var(--font-mono); }
+  .amt { color:var(--green); font-family:var(--font-mono); }
+  .amt-dim { color:var(--text-dim); font-family:var(--font-mono); font-size:11px; }
+
+  .badge {
+    display:inline-flex; align-items:center; gap:4px;
+    border-radius:4px; padding:2px 8px; font-size:10px; font-family:var(--font-mono);
+  }
+  .badge-paid { background:rgba(0,255,136,0.12); color:var(--green); border:1px solid rgba(0,255,136,0.2); }
+  .badge-pend { background:rgba(255,204,0,0.1); color:var(--yellow); border:1px solid rgba(255,204,0,0.2); }
+  .badge-proc { background:rgba(0,245,255,0.1); color:var(--cyan); border:1px solid rgba(0,245,255,0.2); }
+  .badge-cancel { background:rgba(255,0,170,0.1); color:var(--magenta); border:1px solid rgba(255,0,170,0.2); }
+
+  /* ── KOMMO MINI ── */
+  .kommo-stages { display:flex; flex-direction:column; gap:10px; }
+  .stage-row { display:flex; align-items:center; gap:10px; }
+  .stage-name { font-family:var(--font-mono); font-size:10px; color:var(--text-dim); width:130px; flex-shrink:0; }
+  .stage-bar-wrap { flex:1; height:6px; background:var(--bg-card2); border-radius:3px; overflow:hidden; }
+  .stage-bar { height:100%; border-radius:3px; transition:width .8s ease; }
+  .stage-count { font-family:var(--font-mono); font-size:11px; color:var(--text); min-width:30px; text-align:right; }
+
+  /* ── DONUT MINI ── */
+  .donut-wrap { display:flex; align-items:center; gap:24px; }
+  .donut-canvas { width:110px!important; height:110px!important; flex-shrink:0; }
+  .donut-legend { display:flex; flex-direction:column; gap:8px; }
+  .donut-row { display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:10px; }
+  .donut-swatch { width:10px; height:10px; border-radius:2px; }
+  .donut-pct { color:var(--text); }
+  .donut-lbl { color:var(--text-dim); }
+
+  /* ── LOADING OVERLAY ── */
+  .loading-overlay {
+    position:absolute; inset:0; z-index:10;
+    background:rgba(5,5,8,0.8); backdrop-filter:blur(4px);
+    display:flex; align-items:center; justify-content:center;
+    border-radius:14px;
+    opacity:0; pointer-events:none;
+    transition: opacity .3s;
+  }
+  .loading-overlay.active { opacity:1; pointer-events:auto; }
+  .loader-ring {
+    width:36px; height:36px; border-radius:50%;
+    border:2px solid var(--border);
+    border-top-color:var(--cyan);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to{transform:rotate(360deg)} }
+
+  /* ── EMPTY / ERROR STATES ── */
+  .empty-state {
+    padding:40px; text-align:center;
+    font-family:var(--font-mono); font-size:11px; color:var(--text-ghost);
+    border:1px dashed var(--border); border-radius:8px; margin:8px 0;
+  }
+  .error-msg {
+    background:rgba(255,0,170,0.06); border:1px solid rgba(255,0,170,0.2);
+    border-radius:8px; padding:10px 14px;
+    font-family:var(--font-mono); font-size:10px; color:var(--magenta);
+    margin-bottom:12px; display:none;
+  }
+
+  /* ── CONFIG MODAL ── */
+  .modal-overlay {
+    position:fixed; inset:0; z-index:200;
+    background:rgba(5,5,8,0.88); backdrop-filter:blur(8px);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .3s;
+  }
+  .modal-overlay.open { opacity:1; pointer-events:auto; }
+  .modal {
+    background:var(--bg-card); border:1px solid var(--border-glow);
+    border-radius:16px; padding:32px; width:520px; max-width:95vw;
+    box-shadow:0 0 60px rgba(0,245,255,0.08);
+  }
+  .modal-title { font-size:16px; font-weight:800; margin-bottom:4px; }
+  .modal-sub { font-family:var(--font-mono); font-size:10px; color:var(--text-dim); margin-bottom:24px; }
+  .form-group { margin-bottom:16px; }
+  .form-label { font-family:var(--font-mono); font-size:10px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; margin-bottom:6px; display:block; }
+  .form-input {
+    width:100%; background:var(--bg-void); border:1px solid var(--border);
+    color:var(--text); font-family:var(--font-mono); font-size:12px;
+    padding:10px 14px; border-radius:8px; outline:none;
+    transition:border-color .2s;
+  }
+  .form-input:focus { border-color:var(--cyan); }
+  .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .modal-actions { display:flex; gap:10px; margin-top:24px; }
+  .btn-save {
+    flex:1; background:linear-gradient(135deg,var(--cyan),var(--cyan-dim));
+    color:#000; font-family:var(--font-mono); font-weight:700; font-size:12px;
+    padding:12px; border:none; border-radius:8px; cursor:pointer;
+    letter-spacing:1px; transition:opacity .2s;
+  }
+  .btn-save:hover { opacity:0.85; }
+  .btn-cancel {
+    background:transparent; border:1px solid var(--border-glow);
+    color:var(--text-dim); font-family:var(--font-mono); font-size:12px;
+    padding:12px 20px; border-radius:8px; cursor:pointer;
+    transition:border-color .2s;
+  }
+  .btn-cancel:hover { border-color:var(--magenta); color:var(--magenta); }
+
+  /* scrollbar */
+  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--border-glow);border-radius:3px}
+
+  /* ── SUCURSAL SELECTOR ── */
+  .sucursal-tabs { display:flex; gap:6px; flex-wrap:wrap; }
+  .suc-btn {
+    background:var(--bg-card2); border:1px solid var(--border);
+    color:var(--text-dim); font-family:var(--font-mono); font-size:10px;
+    padding:5px 12px; border-radius:5px; cursor:pointer;
+    transition:all .2s; display:flex; align-items:center; gap:5px;
+  }
+  .suc-btn::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--clr,var(--cyan)); }
+  .suc-btn.active { background:rgba(var(--clr-rgb,0,245,255),0.1); border-color:var(--clr,var(--cyan)); color:var(--text); }
+
+  .section-label {
+    font-family:var(--font-mono); font-size:9px; letter-spacing:2px;
+    color:var(--text-ghost); text-transform:uppercase; margin-bottom:14px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .section-label::after { content:''; flex:1; height:1px; background:var(--border); }
+</style>
+</head>
+<body>
+
+<!-- CONFIG MODAL -->
+<div class="modal-overlay" id="configModal">
+  <div class="modal">
+    <div class="modal-title">⚙ Configuración de Conexiones</div>
+    <div class="modal-sub">MODAS NT · Credenciales de integración</div>
+
+    <div class="form-group">
+      <label class="form-label">🔗 Google Sheet ID (Facturas/Compras)</label>
+      <input class="form-input" id="cfg_sheet_id" placeholder="1i3PfUBhNVUsyEawRdUj8_VlM1Gc1BBcB5UuNaTrXu70"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">🌐 WooCommerce URL</label>
+      <input class="form-input" id="cfg_woo_url" placeholder="https://tusitio.com"/>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">WC Consumer Key</label>
+        <input class="form-input" id="cfg_woo_key" placeholder="ck_xxxxxxxxxx"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">WC Consumer Secret</label>
+        <input class="form-input" id="cfg_woo_secret" placeholder="cs_xxxxxxxxxx" type="password"/>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">🏢 Kommo Dominio</label>
+      <input class="form-input" id="cfg_kommo_domain" placeholder="modas-nt.kommo.com"/>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Kommo Pipeline ID</label>
+        <input class="form-input" id="cfg_kommo_pipeline" placeholder="123456"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Kommo Access Token</label>
+        <input class="form-input" id="cfg_kommo_token" placeholder="eyJ..." type="password"/>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-save" onclick="saveConfig()">GUARDAR Y CONECTAR</button>
+      <button class="btn-cancel" onclick="closeConfig()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo-block">
+      <div class="logo-badge">MN</div>
+      <div>
+        <div class="logo-text">MODAS<span>NT</span></div>
+        <div class="logo-sub">DASHBOARD OPERACIONAL · MX</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-dot">LIVE DATA</div>
+      <div class="now-label" id="clockLabel">--:--:--</div>
+      <button class="refresh-btn" onclick="openConfig()">⚙ <span>CONECTAR</span></button>
+    </div>
+  </header>
+
+  <!-- CONFIG BANNER -->
+  <div class="config-banner" id="configBanner">
+    <span class="icon">⚠️</span>
+    <div>
+      <strong>Conexiones no configuradas.</strong> El dashboard muestra datos de demostración.
+      <a href="#" onclick="openConfig();return false;">Haz clic aquí para configurar las integraciones</a>
+      (WooCommerce, Kommo, Google Sheets).
+    </div>
+  </div>
+
+  <!-- CONTROLS BAR -->
+  <div class="controls-bar">
+    <span class="ctrl-label">RANGO</span>
+    <div class="range-tabs">
+      <button class="tab-btn active" data-range="week" onclick="setRange('week',this)">Semanal</button>
+      <button class="tab-btn" data-range="month" onclick="setRange('month',this)">Mensual</button>
+      <button class="tab-btn" data-range="custom" onclick="setRange('custom',this)">Personalizado</button>
+    </div>
+    <div id="customDates" style="display:none;align-items:center;gap:8px;">
+      <input type="date" class="date-input" id="dateFrom"/>
+      <span style="color:var(--text-dim);font-size:12px;">→</span>
+      <input type="date" class="date-input" id="dateTo"/>
+      <button class="tab-btn" onclick="applyCustomRange()">Aplicar</button>
+    </div>
+    <div class="ctrl-sep"></div>
+    <button class="refresh-btn" onclick="refreshAll()">
+      <span class="spin">↻</span> ACTUALIZAR
+    </button>
+    <div class="panel-meta" style="margin-left:auto">
+      <div class="tag" id="lastUpdateTag">Última act: --</div>
+      <div class="tag" id="dataSourceTag">DEMO MODE</div>
+    </div>
+  </div>
+
+  <!-- KPI STRIP -->
+  <div class="kpi-strip">
+    <div class="kpi-card c">
+      <div class="kpi-label">Ventas Totales</div>
+      <div class="kpi-val" id="kpi_ventas"><sup>$</sup><span id="kv_ventas">--</span></div>
+      <div class="kpi-sub"><span class="kpi-arrow up" id="kv_v_arr">▲</span><span id="kv_v_pct">--</span> vs período ant.</div>
+    </div>
+    <div class="kpi-card m">
+      <div class="kpi-label">Pedidos WooCommerce</div>
+      <div class="kpi-val" id="kpi_pedidos"><span id="kv_pedidos">--</span></div>
+      <div class="kpi-sub"><span class="kpi-arrow" id="kv_p_arr">▲</span><span id="kv_p_pct" class="up">--</span> vs período ant.</div>
+    </div>
+    <div class="kpi-card g">
+      <div class="kpi-label">Pedidos Pagados</div>
+      <div class="kpi-val" id="kpi_pagados"><span id="kv_pagados">--</span></div>
+      <div class="kpi-sub"><span id="kv_pagados_pct" class="up">--%</span> tasa de pago</div>
+    </div>
+    <div class="kpi-card y">
+      <div class="kpi-label">Compras / Bodega</div>
+      <div class="kpi-val" id="kpi_compras"><sup>$</sup><span id="kv_compras">--</span></div>
+      <div class="kpi-sub" id="kv_compras_sub">-- proveedores</div>
+    </div>
+    <div class="kpi-card o">
+      <div class="kpi-label">Leads Kommo</div>
+      <div class="kpi-val" id="kpi_leads"><span id="kv_leads">--</span></div>
+      <div class="kpi-sub"><span id="kv_leads_sub">-- en pipeline</span></div>
+    </div>
+  </div>
+
+  <!-- MAIN GRID: ventas chart + kommo -->
+  <div class="main-grid">
+
+    <!-- VENTAS POR SUCURSAL -->
+    <div class="panel" style="position:relative">
+      <div class="loading-overlay" id="chartLoading"><div class="loader-ring"></div></div>
+      <div class="panel-head">
+        <div class="panel-title" style="--clr:var(--cyan)">
+          <div class="dot"></div>
+          Ventas por Sucursal
+        </div>
+        <div class="sucursal-tabs" id="sucursalTabs">
+          <!-- generated -->
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="error-msg" id="chartError"></div>
+        <div class="chart-wrap">
+          <canvas id="salesChart"></canvas>
+        </div>
+        <div class="sucursal-legend" id="sucursalLegend"></div>
+      </div>
+    </div>
+
+    <!-- KOMMO PIPELINE -->
+    <div class="panel" style="position:relative">
+      <div class="loading-overlay" id="kommoLoading"><div class="loader-ring"></div></div>
+      <div class="panel-head">
+        <div class="panel-title" style="--clr:var(--magenta)">
+          <div class="dot" style="background:var(--magenta);box-shadow:0 0 8px var(--magenta)"></div>
+          Pipeline Kommo
+        </div>
+        <div class="panel-meta"><div class="tag" id="kommoPipelineTag">--</div></div>
+      </div>
+      <div class="panel-body">
+        <div class="error-msg" id="kommoError"></div>
+        <div style="margin-bottom:20px">
+          <div class="kpi-label">Distribución de etapas</div>
+          <div class="donut-wrap">
+            <canvas class="donut-canvas" id="kommoDonut"></canvas>
+            <div class="donut-legend" id="kommoLegend"></div>
+          </div>
+        </div>
+        <div class="section-label">Detalle por etapa</div>
+        <div class="kommo-stages" id="kommoStages">
+          <!-- generated -->
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- BOTTOM GRID: compras + pedidos woo -->
+  <div class="bottom-grid">
+
+    <!-- BODEGA / COMPRAS -->
+    <div class="panel" style="position:relative">
+      <div class="loading-overlay" id="comprasLoading"><div class="loader-ring"></div></div>
+      <div class="panel-head">
+        <div class="panel-title" style="--clr:var(--yellow)">
+          <div class="dot" style="background:var(--yellow);box-shadow:0 0 8px var(--yellow)"></div>
+          Bodega Central · Compras
+        </div>
+        <div class="panel-meta">
+          <div class="tag" id="comprasTag">Google Sheets</div>
+        </div>
+      </div>
+      <div class="panel-body" style="padding:0">
+        <div id="comprasError" class="error-msg" style="margin:12px 16px"></div>
+        <div style="overflow-x:auto;max-height:360px;overflow-y:auto">
+          <table class="data-table" id="comprasTable">
+            <thead>
+              <tr>
+                <th>Proveedor</th>
+                <th>Fecha</th>
+                <th>Productos</th>
+                <th>Total</th>
+                <th>Registrado por</th>
+              </tr>
+            </thead>
+            <tbody id="comprasBody">
+              <tr><td colspan="5"><div class="empty-state">Cargando datos de compras…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- PEDIDOS WOOCOMMERCE -->
+    <div class="panel" style="position:relative">
+      <div class="loading-overlay" id="wooLoading"><div class="loader-ring"></div></div>
+      <div class="panel-head">
+        <div class="panel-title" style="--clr:var(--green)">
+          <div class="dot" style="background:var(--green);box-shadow:0 0 8px var(--green)"></div>
+          Pedidos WooCommerce
+        </div>
+        <div class="panel-meta">
+          <div class="tag" id="wooApiTag">REST API</div>
+        </div>
+      </div>
+      <div class="panel-body" style="padding:0">
+        <div id="wooError" class="error-msg" style="margin:12px 16px"></div>
+
+        <!-- mini bar chart: pedidos por día -->
+        <div style="padding:16px 20px 8px">
+          <div class="kpi-label">Pedidos por día</div>
+          <div style="position:relative;height:100px">
+            <canvas id="wooBarChart"></canvas>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto;max-height:260px;overflow-y:auto">
+          <table class="data-table" id="wooTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Fecha</th>
+                <th>Cliente</th>
+                <th>Total</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="wooBody">
+              <tr><td colspan="5"><div class="empty-state">Cargando pedidos…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- /shell -->
+
+<script>
+// ══════════════════════════════════════════════
+//  CONFIG & STATE
+// ══════════════════════════════════════════════
+const CFG_KEY = 'modasnt_cfg_v1';
+let cfg = {};
+let activeRange = 'week';
+let salesChartInst = null;
+let wooBarChartInst = null;
+let kommoDonutInst = null;
+
+const SUCURSALES = [
+  { id:'bodega',  name:'Bodega Central', clr:'#00f5ff' },
+  { id:'local1',  name:'Local 1',        clr:'#ff00aa' },
+  { id:'local2',  name:'Local 2',        clr:'#00ff88' },
+  { id:'local3',  name:'Local 3',        clr:'#ffcc00' },
+  { id:'local4',  name:'Local 4',        clr:'#ff6600' },
+  { id:'local5',  name:'Local 5',        clr:'#aa55ff' },
+];
+let visibleSucs = new Set(SUCURSALES.map(s=>s.id));
+
+// ══════════════════════════════════════════════
+//  CLOCK
+// ══════════════════════════════════════════════
+function tick(){
+  const now = new Date();
+  document.getElementById('clockLabel').textContent =
+    now.toLocaleTimeString('es-MX',{hour12:false}) + ' · ' +
+    now.toLocaleDateString('es-MX',{day:'2-digit',month:'short'});
+}
+tick(); setInterval(tick,1000);
+
+// ══════════════════════════════════════════════
+//  DATE HELPERS
+// ══════════════════════════════════════════════
+function getRangeISO(range){
+  const now = new Date();
+  let from = new Date();
+  if(range==='week') from.setDate(now.getDate()-7);
+  else if(range==='month') from.setDate(now.getDate()-30);
+  else {
+    const f = document.getElementById('dateFrom').value;
+    const t = document.getElementById('dateTo').value;
+    return { from: f+'T00:00:00', to: t+'T23:59:59' };
+  }
+  return {
+    from: from.toISOString().slice(0,10)+'T00:00:00',
+    to:   now.toISOString().slice(0,10)+'T23:59:59'
+  };
+}
+
+function fmtMXN(n){
+  return new Intl.NumberFormat('es-MX',{
+    style:'currency',currency:'MXN',maximumFractionDigits:0
+  }).format(n||0);
+}
+function fmtNum(n){ return new Intl.NumberFormat('es-MX').format(n||0); }
+
+// ══════════════════════════════════════════════
+//  CONFIG
+// ══════════════════════════════════════════════
+function loadConfig(){
+  try { cfg = JSON.parse(localStorage.getItem(CFG_KEY)||'{}'); } catch(e){ cfg={}; }
+  // prefill form
+  ['sheet_id','woo_url','woo_key','woo_secret','kommo_domain','kommo_pipeline','kommo_token']
+    .forEach(k=>{ const el=document.getElementById('cfg_'+k); if(el&&cfg[k]) el.value=cfg[k]; });
+}
+function saveConfig(){
+  cfg = {
+    sheet_id:    document.getElementById('cfg_sheet_id').value.trim(),
+    woo_url:     document.getElementById('cfg_woo_url').value.trim().replace(/\/$/,''),
+    woo_key:     document.getElementById('cfg_woo_key').value.trim(),
+    woo_secret:  document.getElementById('cfg_woo_secret').value.trim(),
+    kommo_domain:document.getElementById('cfg_kommo_domain').value.trim(),
+    kommo_pipeline:document.getElementById('cfg_kommo_pipeline').value.trim(),
+    kommo_token: document.getElementById('cfg_kommo_token').value.trim(),
+  };
+  localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+  const isConfigured = cfg.woo_url||cfg.sheet_id||cfg.kommo_domain;
+  document.getElementById('configBanner').style.display = isConfigured?'none':'flex';
+  document.getElementById('dataSourceTag').textContent = isConfigured?'LIVE DATA':'DEMO MODE';
+  closeConfig();
+  refreshAll();
+}
+function openConfig(){ document.getElementById('configModal').classList.add('open'); }
+function closeConfig(){ document.getElementById('configModal').classList.remove('open'); }
+
+// ══════════════════════════════════════════════
+//  RANGE CONTROLS
+// ══════════════════════════════════════════════
+function setRange(r, btn){
+  activeRange = r;
+  document.querySelectorAll('.tab-btn[data-range]').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('customDates').style.display = r==='custom'?'flex':'none';
+  if(r!=='custom') refreshAll();
+}
+function applyCustomRange(){ refreshAll(); }
+
+// ══════════════════════════════════════════════
+//  BUILD SUCURSAL TABS & LEGEND
+// ══════════════════════════════════════════════
+function buildSucursalUI(){
+  const tabsEl = document.getElementById('sucursalTabs');
+  const legEl  = document.getElementById('sucursalLegend');
+  tabsEl.innerHTML=''; legEl.innerHTML='';
+  SUCURSALES.forEach(s=>{
+    const btn = document.createElement('button');
+    btn.className='suc-btn active';
+    btn.style.setProperty('--clr',s.clr);
+    btn.dataset.id = s.id;
+    btn.textContent = s.name;
+    btn.onclick = ()=>{
+      if(visibleSucs.has(s.id)) visibleSucs.delete(s.id);
+      else visibleSucs.add(s.id);
+      btn.classList.toggle('active');
+      updateSalesChart();
+    };
+    tabsEl.appendChild(btn);
+
+    const leg = document.createElement('div');
+    leg.className='leg-item';
+    leg.innerHTML=`<div class="leg-dot" style="background:${s.clr};color:${s.clr}"></div>${s.name}`;
+    legEl.appendChild(leg);
+  });
+}
+
+// ══════════════════════════════════════════════
+//  DEMO DATA GENERATORS
+// ══════════════════════════════════════════════
+function genDays(n){
+  const arr=[];
+  for(let i=n-1;i>=0;i--){
+    const d=new Date(); d.setDate(d.getDate()-i);
+    arr.push(d.toLocaleDateString('es-MX',{day:'2-digit',month:'short'}));
+  }
+  return arr;
+}
+function rnd(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+function genSeries(n,base,variance){
+  return Array.from({length:n},()=>rnd(base-variance,base+variance));
+}
+
+const DEMO_LABELS_W = genDays(7);
+const DEMO_LABELS_M = genDays(30);
+
+function getDemoSalesData(range){
+  const labels = range==='month'?DEMO_LABELS_M:DEMO_LABELS_W;
+  const n = labels.length;
+  return {
+    labels,
+    datasets: SUCURSALES.map(s=>({
+      label: s.name,
+      id: s.id,
+      data: genSeries(n, rnd(18000,45000), 8000),
+      borderColor: s.clr,
+      backgroundColor: s.clr+'18',
+      borderWidth:2, pointRadius:3,
+      pointBackgroundColor: s.clr,
+      tension:0.4, fill:false,
+    }))
+  };
+}
+
+function getDemoWooOrders(range){
+  const n = range==='month'?30:7;
+  const labels = genDays(n);
+  const statuses = ['processing','completed','completed','pending','completed','processing','cancelled'];
+  const names = ['Ana García','Carlos López','María Hdz','Juan Pérez','Sofía Mn','Pedro Rz','Laura Vz'];
+  const orders = labels.flatMap((lbl,i)=>
+    Array.from({length:rnd(1,5)},(_,j)=>({
+      number: 1000+i*5+j,
+      date: lbl,
+      customer: names[rnd(0,names.length-1)],
+      total: rnd(280,4200),
+      status: statuses[rnd(0,statuses.length-1)],
+    }))
+  );
+  const byDay = labels.map(lbl=> orders.filter(o=>o.date===lbl).length);
+  return { labels, byDay, orders: orders.slice(-20) };
+}
+
+const DEMO_COMPRAS = [
+  { proveedor:'J&M JERA', fecha:'21/05/2026', productos:'N1, PB16, PT SET 97, WDC9', total:21680, usuario:'Cristina Gabino' },
+  { proveedor:'Comercializadora Evancer', fecha:'06/06/2026', productos:'Boxer DF3001, Calzón 7007, Top DMF6855...', total:284434, usuario:'Cristina Gabino' },
+  { proveedor:'Distribuidora Moda MX', fecha:'01/06/2026', productos:'Blusa ref A12, Pantalón ref B09', total:45200, usuario:'Cristina Gabino' },
+  { proveedor:'Textiles del Norte', fecha:'28/05/2026', productos:'Vestido V7, Conjunto K3', total:32800, usuario:'Cristina Gabino' },
+];
+
+const DEMO_KOMMO = [
+  { name:'Nuevo Lead',         count:24, clr:'#00f5ff' },
+  { name:'Contactado',         count:18, clr:'#aa55ff' },
+  { name:'En seguimiento',     count:12, clr:'#ffcc00' },
+  { name:'Propuesta enviada',  count:8,  clr:'#ff6600' },
+  { name:'Ganado',             count:5,  clr:'#00ff88' },
+  { name:'Perdido',            count:3,  clr:'#ff00aa' },
+];
+
+// ══════════════════════════════════════════════
+//  GOOGLE SHEETS FETCH (gviz/tq)
+// ══════════════════════════════════════════════
+async function fetchSheetCompras(){
+  if(!cfg.sheet_id) return null;
+  // Tab: estados (resumen de facturas)
+  const url = `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}/gviz/tq?tqx=out:json&sheet=estados`;
+  try{
+    const res = await fetch(url);
+    const text = await res.text();
+    const json = JSON.parse(text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/)[1]);
+    const rows = json.table.rows;
+    return rows.map(r=>({
+      usuario:   r.c[2]?.v||'',
+      proveedor: r.c[3]?.v||'—',
+      fecha:     r.c[4]?.v||'',
+      total:     parseFloat(r.c[9]?.v)||0,
+    }));
+  }catch(e){
+    console.warn('Sheet fetch error',e);
+    return null;
+  }
+}
+
+// ══════════════════════════════════════════════
+//  WOOCOMMERCE FETCH
+// ══════════════════════════════════════════════
+async function fetchWooOrders(range){
+  if(!cfg.woo_url||!cfg.woo_key) return null;
+  const {from,to} = getRangeISO(range);
+  const auth = btoa(`${cfg.woo_key}:${cfg.woo_secret}`);
+  const url = `${cfg.woo_url}/wp-json/wc/v3/orders?after=${from}&before=${to}&per_page=50&orderby=date&order=desc`;
+  try{
+    const res = await fetch(url, { headers:{ Authorization:`Basic ${auth}` } });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }catch(e){
+    console.warn('WooCommerce error',e);
+    return null;
+  }
+}
+
+// ══════════════════════════════════════════════
+//  KOMMO FETCH (requires CORS proxy in production)
+// ══════════════════════════════════════════════
+async function fetchKommoPipeline(){
+  if(!cfg.kommo_domain||!cfg.kommo_token) return null;
+  const url = `https://${cfg.kommo_domain}/api/v4/leads?pipeline_id=${cfg.kommo_pipeline}&limit=250`;
+  try{
+    const res = await fetch(url, { headers:{ Authorization:`Bearer ${cfg.kommo_token}` } });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    // group by status
+    const stages={};
+    (data._embedded?.leads||[]).forEach(l=>{
+      const name = l.status_id||'Desconocido';
+      stages[name]=(stages[name]||0)+1;
+    });
+    return stages;
+  }catch(e){
+    console.warn('Kommo error',e);
+    return null;
+  }
+}
+
+// ══════════════════════════════════════════════
+//  CHARTS
+// ══════════════════════════════════════════════
+Chart.defaults.color = '#7a7f96';
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 10;
+
+function buildSalesChart(data){
+  const ctx = document.getElementById('salesChart').getContext('2d');
+  if(salesChartInst) salesChartInst.destroy();
+  const visible = data.datasets.filter(d=>visibleSucs.has(d.id));
+  salesChartInst = new Chart(ctx,{
+    type:'line',
+    data:{ labels:data.labels, datasets:visible },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ display:false },
+        tooltip:{
+          backgroundColor:'#0f1016',
+          borderColor:'#2a2d3e', borderWidth:1,
+          titleFont:{size:10,weight:'bold'},
+          bodyFont:{size:10},
+          callbacks:{
+            label(ctx){ return `  ${ctx.dataset.label}: ${fmtMXN(ctx.parsed.y)}`; }
+          }
+        }
+      },
+      scales:{
+        x:{
+          grid:{ color:'rgba(28,30,42,0.8)' },
+          ticks:{ maxTicksLimit:8 }
+        },
+        y:{
+          grid:{ color:'rgba(28,30,42,0.8)' },
+          ticks:{ callback:v=> '$'+new Intl.NumberFormat('es-MX',{notation:'compact'}).format(v) }
+        }
+      }
+    }
+  });
+}
+
+function updateSalesChart(){
+  if(!salesChartInst) return;
+  const all = salesChartInst.config.data;
+  // rebuild with visibility; we store full datasets on chart
+  // for simplicity re-render
+  if(window._lastSalesData) buildSalesChart(window._lastSalesData);
+}
+
+function buildWooBar(labels, data){
+  const ctx = document.getElementById('wooBarChart').getContext('2d');
+  if(wooBarChartInst) wooBarChartInst.destroy();
+  wooBarChartInst = new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels,
+      datasets:[{
+        label:'Pedidos',
+        data,
+        backgroundColor:'rgba(0,255,136,0.25)',
+        borderColor:'#00ff88',
+        borderWidth:1, borderRadius:3,
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ grid:{display:false}, ticks:{maxTicksLimit:7} },
+        y:{ grid:{color:'rgba(28,30,42,0.8)'}, ticks:{stepSize:1} }
+      }
+    }
+  });
+}
+
+function buildKommoDonut(stages){
+  const ctx = document.getElementById('kommoDonut').getContext('2d');
+  if(kommoDonutInst) kommoDonutInst.destroy();
+  const total = stages.reduce((s,st)=>s+st.count,0);
+  kommoDonutInst = new Chart(ctx,{
+    type:'doughnut',
+    data:{
+      labels: stages.map(s=>s.name),
+      datasets:[{
+        data: stages.map(s=>s.count),
+        backgroundColor: stages.map(s=>s.clr+'55'),
+        borderColor: stages.map(s=>s.clr),
+        borderWidth:1,
+      }]
+    },
+    options:{
+      responsive:false, cutout:'72%',
+      plugins:{ legend:{display:false}, tooltip:{
+        backgroundColor:'#0f1016', borderColor:'#2a2d3e', borderWidth:1,
+        callbacks:{
+          label(ctx){ return ` ${ctx.label}: ${ctx.parsed} leads`; }
+        }
+      }}
+    }
+  });
+
+  const legEl = document.getElementById('kommoLegend');
+  legEl.innerHTML = stages.map(s=>`
+    <div class="donut-row">
+      <div class="donut-swatch" style="background:${s.clr}"></div>
+      <span class="donut-pct">${Math.round(s.count/total*100)}%</span>
+      <span class="donut-lbl">${s.name}</span>
+    </div>
+  `).join('');
+
+  const stagesEl = document.getElementById('kommoStages');
+  const max = Math.max(...stages.map(s=>s.count));
+  stagesEl.innerHTML = stages.map(s=>`
+    <div class="stage-row">
+      <div class="stage-name">${s.name}</div>
+      <div class="stage-bar-wrap">
+        <div class="stage-bar" style="width:${Math.round(s.count/max*100)}%;background:${s.clr};box-shadow:0 0 6px ${s.clr}60"></div>
+      </div>
+      <div class="stage-count">${s.count}</div>
+    </div>
+  `).join('');
+}
+
+// ══════════════════════════════════════════════
+//  RENDER FUNCTIONS
+// ══════════════════════════════════════════════
+function renderKPIs(sales, wooData, compras, kommoTotal){
+  // ventas
+  const totalVentas = sales.datasets.reduce((s,d)=>s+d.data.reduce((a,b)=>a+b,0),0);
+  document.getElementById('kv_ventas').textContent = new Intl.NumberFormat('es-MX',{notation:'compact',maximumFractionDigits:1}).format(totalVentas);
+
+  // woo
+  const total = wooData.orders.length;
+  const paid  = wooData.orders.filter(o=>o.status==='completed'||o.status==='processing').length;
+  document.getElementById('kv_pedidos').textContent = fmtNum(wooData.byDay.reduce((a,b)=>a+b,0));
+  document.getElementById('kv_pagados').textContent = fmtNum(paid);
+  document.getElementById('kv_pagados_pct').textContent = total?Math.round(paid/total*100)+'%':'—';
+
+  // compras
+  const totalCompras = compras.reduce((s,c)=>s+(c.total||0),0);
+  const provs = new Set(compras.map(c=>c.proveedor)).size;
+  document.getElementById('kv_compras').textContent = new Intl.NumberFormat('es-MX',{notation:'compact',maximumFractionDigits:1}).format(totalCompras);
+  document.getElementById('kv_compras_sub').textContent = `${provs} proveedor${provs!==1?'es':''}`;
+
+  // kommo
+  document.getElementById('kv_leads').textContent = fmtNum(kommoTotal);
+  document.getElementById('kv_leads_sub').textContent = 'leads en pipeline activo';
+
+  // pct change (random demo)
+  const pct = rnd(2,18);
+  document.getElementById('kv_v_pct').textContent = pct+'%';
+  document.getElementById('kv_p_pct').textContent = rnd(1,12)+'%';
+}
+
+function renderComprasTable(compras){
+  const tbody = document.getElementById('comprasBody');
+  if(!compras||!compras.length){
+    tbody.innerHTML=`<tr><td colspan="5"><div class="empty-state">Sin datos de compras en el período</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = compras.map(c=>`
+    <tr>
+      <td><strong>${c.proveedor}</strong></td>
+      <td class="mono" style="color:var(--text-dim)">${c.fecha}</td>
+      <td style="font-size:11px;color:var(--text-dim);max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.productos||'—'}</td>
+      <td class="amt">${fmtMXN(c.total)}</td>
+      <td style="font-size:10px;color:var(--text-dim)">${c.usuario||'—'}</td>
+    </tr>
+  `).join('');
+}
+
+function getWooStatusBadge(s){
+  const map={
+    completed:  '<span class="badge badge-paid">✓ Completado</span>',
+    processing: '<span class="badge badge-proc">⟳ Procesando</span>',
+    pending:    '<span class="badge badge-pend">◌ Pendiente</span>',
+    cancelled:  '<span class="badge badge-cancel">✕ Cancelado</span>',
+  };
+  return map[s]||`<span class="badge" style="background:#1c1e2a">${s}</span>`;
+}
+
+function renderWooTable(orders){
+  const tbody = document.getElementById('wooBody');
+  if(!orders||!orders.length){
+    tbody.innerHTML=`<tr><td colspan="5"><div class="empty-state">Sin pedidos en el período</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = orders.slice(0,20).map(o=>`
+    <tr>
+      <td class="mono" style="color:var(--cyan)">#${o.number}</td>
+      <td class="mono" style="color:var(--text-dim);font-size:10px">${o.date||o.date_created?.slice(0,10)||'—'}</td>
+      <td style="font-size:11px">${o.customer||o.billing?.first_name+' '+o.billing?.last_name||'—'}</td>
+      <td class="amt">${fmtMXN(o.total)}</td>
+      <td>${getWooStatusBadge(o.status)}</td>
+    </tr>
+  `).join('');
+}
+
+// ══════════════════════════════════════════════
+//  MAIN REFRESH
+// ══════════════════════════════════════════════
+async function refreshAll(){
+  const range = activeRange;
+  const isLive = !!(cfg.woo_url||cfg.sheet_id||cfg.kommo_domain);
+
+  // show loaders
+  ['chartLoading','wooLoading','comprasLoading','kommoLoading']
+    .forEach(id=>document.getElementById(id).classList.add('active'));
+
+  document.getElementById('lastUpdateTag').textContent = 'Actualizando…';
+
+  // ── SALES (Kommo or demo) ──
+  let salesData = getDemoSalesData(range);
+  window._lastSalesData = salesData;
+  buildSalesChart(salesData);
+  document.getElementById('chartLoading').classList.remove('active');
+
+  // ── COMPRAS (Google Sheets) ──
+  let compras = DEMO_COMPRAS;
+  const sheetData = await fetchSheetCompras();
+  if(sheetData){
+    compras = sheetData.map(r=>({
+      proveedor: r.proveedor||'—',
+      fecha: r.fecha,
+      total: r.total,
+      usuario: r.usuario,
+      productos:'(ver sheet)',
+    }));
+  }
+  renderComprasTable(compras);
+  document.getElementById('comprasLoading').classList.remove('active');
+  document.getElementById('comprasTag').textContent = sheetData?'Google Sheets ✓':'Google Sheets (demo)';
+
+  // ── WOO ──
+  let wooData = getDemoWooOrders(range);
+  const wooRaw = await fetchWooOrders(range);
+  if(wooRaw && Array.isArray(wooRaw)){
+    const labels = genDays(range==='month'?30:7);
+    const byDay  = labels.map(lbl=>
+      wooRaw.filter(o=>{
+        const d = new Date(o.date_created);
+        return d.toLocaleDateString('es-MX',{day:'2-digit',month:'short'})===lbl;
+      }).length
+    );
+    wooData = {
+      labels,
+      byDay,
+      orders: wooRaw.map(o=>({
+        number: o.number,
+        date: o.date_created?.slice(0,10),
+        customer: (o.billing?.first_name||'')+ ' '+(o.billing?.last_name||''),
+        total: parseFloat(o.total)||0,
+        status: o.status,
+      }))
+    };
+    document.getElementById('wooApiTag').textContent = 'WooCommerce ✓';
+  }
+  buildWooBar(wooData.labels, wooData.byDay);
+  renderWooTable(wooData.orders);
+  document.getElementById('wooLoading').classList.remove('active');
+
+  // ── KOMMO ──
+  let kommoStages = DEMO_KOMMO;
+  const kommoRaw = await fetchKommoPipeline();
+  if(kommoRaw){
+    const clrs=['#00f5ff','#aa55ff','#ffcc00','#ff6600','#00ff88','#ff00aa'];
+    kommoStages = Object.entries(kommoRaw).map(([name,count],i)=>({
+      name, count, clr:clrs[i%clrs.length]
+    }));
+    document.getElementById('kommoPipelineTag').textContent = cfg.kommo_pipeline||'pipeline';
+  }
+  buildKommoDonut(kommoStages);
+  document.getElementById('kommoLoading').classList.remove('active');
+
+  // ── KPIs ──
+  const kommoTotal = kommoStages.reduce((s,st)=>s+st.count,0);
+  renderKPIs(salesData, wooData, compras, kommoTotal);
+
+  // update tag
+  document.getElementById('lastUpdateTag').textContent =
+    'Última act: '+new Date().toLocaleTimeString('es-MX',{hour12:false});
+  document.getElementById('dataSourceTag').textContent = isLive?'LIVE DATA':'DEMO MODE';
+}
+
+// ══════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════
+loadConfig();
+buildSucursalUI();
+
+const isConfigured = !!(cfg.woo_url||cfg.sheet_id||cfg.kommo_domain);
+if(isConfigured) document.getElementById('configBanner').style.display='none';
+
+// set default dates
+const today = new Date().toISOString().slice(0,10);
+const weekAgo = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+document.getElementById('dateFrom').value = weekAgo;
+document.getElementById('dateTo').value   = today;
+
+refreshAll();
+
+// auto-refresh every 5 min
+setInterval(refreshAll, 5*60*1000);
+</script>
+</body>
+</html>
