@@ -370,12 +370,12 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
     <div class="pb" style="padding:0">
       <div class="errmsg" id="errWoo" style="margin:12px 16px"></div>
       <div style="padding:16px 20px 8px">
-        <div class="kpi-lbl">Pedidos por día</div>
+        <div class="kpi-lbl">Ventas del día por tienda</div>
         <div style="position:relative;height:90px"><canvas id="wooBar"></canvas></div>
       </div>
       <div style="overflow-x:auto;max-height:260px;overflow-y:auto">
         <table class="tbl">
-          <thead><tr><th>#Pedido</th><th>Fecha</th><th>Cliente</th><th>Total</th><th>Estado</th></tr></thead>
+          <thead><tr><th>Tienda</th><th>Fecha</th><th>Ventas</th><th>Cobranzas</th><th>Devoluciones</th></tr></thead>
           <tbody id="wooBody"><tr><td colspan="5"><div class="empty">Cargando…</div></td></tr></tbody>
         </table>
       </div>
@@ -755,18 +755,66 @@ async function fetchKommo(){
 // ══════════════════════════════════════════════════════
 //  WOOCOMMERCE FETCH
 // ══════════════════════════════════════════════════════
-async function fetchWoo(){
-  if(!cfg.woo_url || !cfg.woo_key) return null;
+// ── WordPress POS via n8n proxy (evita CORS) ──────────
+const WP_PROXY = 'https://robot.iallama.com/webhook/wp-pos-proxy';
+const WP_STORES = [
+  { id:1, name:'Bodega' },
+  { id:2, name:'Tienda 2 Barrio Alto' },
+  { id:3, name:'Tienda 1 Zona Escolar' },
+  { id:5, name:'Tienda 4 La Presa' },
+  { id:6, name:'Tienda 5 Bario Bajo' },
+  { id:7, name:'Bodega Tik Tok' },
+];
+
+async function wpProxy(endpoint, params={}){
+  const qs = new URLSearchParams({ endpoint, ...params }).toString();
+  const fullUrl = `${WP_PROXY}?${qs}`;
+  dbg(`wp → ${endpoint}`, 'info', `GET ${fullUrl}`);
   try{
-    const {from, to} = getRange();
-    const auth = btoa(`${cfg.woo_key}:${cfg.woo_secret}`);
-    const url = `${cfg.woo_url}/wp-json/wc/v3/orders?after=${from}&before=${to}&per_page=100&orderby=date&order=desc`;
-    const res = await fetch(url, { headers:{ Authorization:`Basic ${auth}` } });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const orders = await res.json();
-    return { orders, source:'live' };
+    const res = await fetch(fullUrl, { cache:'no-cache' });
+    const text = await res.text();
+    dbg(`wp ← ${endpoint}`, res.ok?'ok':'err',
+      `HTTP ${res.status} · ${text.length} bytes · ${text.slice(0,120)}`);
+    if(!res.ok) throw new Error(`Proxy HTTP ${res.status}: ${text.slice(0,200)}`);
+    return JSON.parse(text);
   }catch(e){
-    console.warn('WooCommerce error:', e);
+    dbg(`wp ✗ ${endpoint}`, 'err', e.message);
+    throw e;
+  }
+}
+
+// Nota: se evita pedir rangos largos (semanas/meses) para no sobrecargar
+// el WordPress — solo se consulta el corte de caja del día por tienda.
+async function fetchWoo(){
+  try{
+    const stores = await Promise.all(WP_STORES.map(async s=>{
+      try{
+        const cd = await wpProxy('cash-day', { store_id: s.id });
+        return { store: s.name, date: cd.date, summary: cd.summary||{} };
+      }catch(e){
+        return { store: s.name, date: null, summary:null, error: e.message };
+      }
+    }));
+
+    let refunds = [];
+    try{
+      const rData = await wpProxy('refunds', { limit: 10 });
+      refunds = rData.refunds || rData.result || [];
+    }catch(e){ console.warn('refunds fetch failed', e); }
+
+    let stockTotal = 0, lowStock = 0;
+    try{
+      const pData = await wpProxy('products', { per_page: 50 });
+      const products = pData.products || pData.result || [];
+      products.forEach(p=>{
+        stockTotal += p.stock_quantity||0;
+        if((p.stock_quantity||0) <= 3) lowStock++;
+      });
+    }catch(e){ console.warn('products fetch failed', e); }
+
+    return { stores, refunds, stockTotal, lowStock, source:'live' };
+  }catch(e){
+    console.warn('WordPress POS error:', e);
     return null;
   }
 }
@@ -863,13 +911,13 @@ function buildWooBar(labels, data){
   if(wooCI) wooCI.destroy();
   wooCI=new Chart(ctx,{
     type:'bar',
-    data:{labels, datasets:[{label:'Pedidos',data,backgroundColor:'rgba(0,255,136,.2)',borderColor:'#00ff88',borderWidth:1,borderRadius:3}]},
+    data:{labels, datasets:[{label:'Ventas $',data,backgroundColor:'rgba(0,255,136,.2)',borderColor:'#00ff88',borderWidth:1,borderRadius:3}]},
     options:{
       responsive:true, maintainAspectRatio:false,
       plugins:{legend:{display:false}},
       scales:{
-        x:{grid:{display:false}, ticks:{maxTicksLimit:7}},
-        y:{grid:{color:'rgba(28,30,42,.8)'}, ticks:{stepSize:1}}
+        x:{grid:{display:false}},
+        y:{grid:{color:'rgba(28,30,42,.8)'}, ticks:{callback:v=>fmxn(v)}}
       }
     }
   });
@@ -972,41 +1020,35 @@ const STATUS_CLASS = {
   pending:'bdg bdg-pnd', cancelled:'bdg bdg-cn',
 };
 function renderWoo(wooData){
-  const n = activeRange==='month'?30:7;
-  const labels = genDays(n);
-  let orders = wooData?.orders||[];
+  const stores = wooData?.stores||[];
+  const ok = stores.filter(s=>s.summary);
 
-  // normalize
-  if(orders.length && orders[0].billing){
-    orders = orders.map(o=>({
-      number: o.number||o.id,
-      date: o.date_created?.slice(0,10),
-      dateLabel: new Date(o.date_created).toLocaleDateString('es-MX',{day:'2-digit',month:'short'}),
-      customer: ((o.billing?.first_name||'')+' '+(o.billing?.last_name||'')).trim()||'—',
-      total: parseFloat(o.total)||0,
-      status: o.status,
-    }));
-  }
-
-  const byDay = labels.map(l=>orders.filter(o=>o.dateLabel===l||o.date===l).length);
-  buildWooBar(labels, byDay);
+  const labels = ok.map(s=>s.store);
+  const ventas = ok.map(s=>s.summary.venta_total||0);
+  buildWooBar(labels, ventas);
 
   const tbody = document.getElementById('wooBody');
-  if(!orders.length){
-    tbody.innerHTML=`<tr><td colspan="5"><div class="empty">Sin pedidos en el período</div></td></tr>`;
-    return;
+  if(!ok.length){
+    tbody.innerHTML=`<tr><td colspan="5"><div class="empty">Sin datos del POS hoy</div></td></tr>`;
+  }else{
+    tbody.innerHTML = ok.map(s=>{
+      const sm = s.summary;
+      const cobranzas = (sm.cobros_tarjeta||0) + (sm.transferencias||0) + (sm.total_entregado_efectivo||0);
+      return `<tr>
+        <td style="font-size:11px">${s.store}</td>
+        <td class="mo" style="color:var(--txd);font-size:10px">${s.date||'—'}</td>
+        <td class="amt">${fmxn(sm.venta_total||0)}</td>
+        <td class="amt">${fmxn(cobranzas)}</td>
+        <td class="amt">${fmxn(sm.devoluciones||0)}</td>
+      </tr>`;
+    }).join('');
   }
-  tbody.innerHTML = orders.slice(0,25).map(o=>`<tr>
-    <td class="mo" style="color:var(--cy)">#${o.number}</td>
-    <td class="mo" style="color:var(--txd);font-size:10px">${o.date||o.dateLabel||'—'}</td>
-    <td style="font-size:11px">${o.customer}</td>
-    <td class="amt">${fmxn(o.total)}</td>
-    <td><span class="${STATUS_CLASS[o.status]||'bdg'}" style="${!STATUS_CLASS[o.status]?'background:#1c1e2a':''}">${STATUS_LABELS[o.status]||o.status}</span></td>
-  </tr>`).join('');
 
-  const paid = orders.filter(o=>o.status==='completed'||o.status==='processing').length;
-  document.getElementById('kWoo').textContent = fnum(orders.length);
-  document.getElementById('kWooFoot').textContent = `${paid} pagados · ${Math.round(paid/orders.length*100)||0}% tasa`;
+  const totalVentas = ok.reduce((a,s)=>a+(s.summary.venta_total||0),0);
+  const refundsCount = (wooData?.refunds||[]).length;
+  document.getElementById('kWoo').textContent = fmxn(totalVentas);
+  document.getElementById('kWooFoot').textContent =
+    `${ok.length}/${stores.length} tiendas · ${refundsCount} devoluciones recientes · stock ${fnum(wooData?.stockTotal||0)} (${wooData?.lowStock||0} bajo)`;
 }
 
 // ══════════════════════════════════════════════════════
@@ -1066,12 +1108,16 @@ async function refresh(){
   buildSalesChart(salesData);
   document.getElementById('lChart').classList.remove('on');
 
-  // ── 4. WOOCOMMERCE ──
+  // ── 4. WORDPRESS POS (ventas, cobranzas, stock) ──
   const wooRaw = await fetchWoo();
   const wooOk = !!wooRaw;
+  dbg('WordPress POS', wooOk?'ok':'err',
+    wooOk
+      ? `✓ Live · ${wooRaw.stores.filter(s=>s.summary).length}/${wooRaw.stores.length} tiendas · stock ${wooRaw.stockTotal}`
+      : '✗ Sin datos reales — usando DEMO · Verificar n8n workflow wp-pos-proxy');
   if(wooOk){
     renderWoo(wooRaw);
-    setTag('wooTag','WooCommerce ✓','ok');
+    setTag('wooTag','POS WordPress ✓','ok');
   } else {
     const demoW = demoWoo();
     buildWooBar(demoW.labels, demoW.byDay);
@@ -1083,8 +1129,8 @@ async function refresh(){
       <td><span class="${STATUS_CLASS[o.status]||'bdg'}">${STATUS_LABELS[o.status]||o.status}</span></td>
     </tr>`).join('');
     document.getElementById('kWoo').textContent='--';
-    document.getElementById('kWooFoot').textContent='Conectar WooCommerce';
-    setTag('wooTag','WooCommerce (demo)');
+    document.getElementById('kWooFoot').textContent='Conectar POS WordPress';
+    setTag('wooTag','POS WordPress (demo)');
   }
   document.getElementById('lWoo').classList.remove('on');
 
