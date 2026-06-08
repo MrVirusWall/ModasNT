@@ -161,21 +161,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
-
-/* DEBUG PANEL */
-.debug-panel{background:#0a0b0f;border:1px solid #2a2d3e;border-radius:10px;padding:14px 18px;margin-bottom:20px;font-family:'JetBrains Mono',monospace;font-size:11px}
-.debug-title{color:#ffcc00;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
-.debug-rows{display:flex;flex-direction:column;gap:6px}
-.debug-row{display:flex;align-items:flex-start;gap:10px;padding:6px 10px;border-radius:6px;background:#0f1016}
-.debug-row .dk{color:#7a7f96;min-width:160px;flex-shrink:0}
-.debug-row .dv{color:#e8eaf0;word-break:break-all}
-.debug-row.ok{border-left:2px solid #00ff88}
-.debug-row.err{border-left:2px solid #ff00aa}
-.debug-row.warn{border-left:2px solid #ffcc00}
-.debug-row.info{border-left:2px solid #00f5ff}
-.debug-toggle{background:transparent;border:1px solid #2a2d3e;color:#7a7f96;font-family:'JetBrains Mono',monospace;font-size:10px;padding:3px 10px;border-radius:4px;cursor:pointer}
-.debug-toggle:hover{border-color:#ffcc00;color:#ffcc00}
-
 </style>
 </head>
 <body>
@@ -247,16 +232,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
     <div class="tag" id="tSheet">Sheet: --</div>
     <div class="tag" id="tKommo">Kommo: --</div>
   </div>
-</div>
-
-
-<!-- DEBUG PANEL -->
-<div class="debug-panel" id="debugPanel">
-  <div class="debug-title">
-    <span>⚡ DEBUG — Estado de conexiones</span>
-    <button class="debug-toggle" onclick="document.getElementById('debugRows').style.display=document.getElementById('debugRows').style.display==='none'?'flex':'none'">ocultar</button>
-  </div>
-  <div class="debug-rows" id="debugRows"></div>
 </div>
 
 <!-- KPI STRIP -->
@@ -386,27 +361,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 </div><!-- /shell -->
 
 <script>
-
-// ══════════════════════════════════════════════════════
-//  DEBUG LOGGER
-// ══════════════════════════════════════════════════════
-const debugLog = [];
-function dbg(key, status, msg){
-  // status: ok | err | warn | info
-  const time = new Date().toLocaleTimeString('es-MX',{hour12:false});
-  debugLog.unshift({key, status, msg, time});
-  renderDebug();
-}
-function renderDebug(){
-  const el = document.getElementById('debugRows');
-  if(!el) return;
-  el.innerHTML = debugLog.slice(0,12).map(d=>`
-    <div class="debug-row ${d.status}">
-      <span class="dk">[${d.time}] ${d.key}</span>
-      <span class="dv">${d.msg}</span>
-    </div>`).join('');
-}
-
 // ══════════════════════════════════════════════════════
 //  DEFAULTS — precargados con los datos del cliente
 // ══════════════════════════════════════════════════════
@@ -690,19 +644,9 @@ const N8N_PROXY = 'https://robot.iallama.com/webhook/kommo-proxy';
 
 async function kommoProxy(endpoint, params={}){
   const qs = new URLSearchParams({ endpoint, ...params }).toString();
-  const fullUrl = `${N8N_PROXY}?${qs}`;
-  dbg(`n8n → ${endpoint}`, 'info', `GET ${fullUrl}`);
-  try{
-    const res = await fetch(fullUrl, { cache:'no-cache' });
-    const text = await res.text();
-    dbg(`n8n ← ${endpoint}`, res.ok?'ok':'err', 
-      `HTTP ${res.status} · ${text.length} bytes · ${text.slice(0,120)}`);
-    if(!res.ok) throw new Error(`Proxy HTTP ${res.status}: ${text.slice(0,200)}`);
-    return JSON.parse(text);
-  }catch(e){
-    dbg(`n8n ✗ ${endpoint}`, 'err', e.message);
-    throw e;
-  }
+  const res = await fetch(`${N8N_PROXY}?${qs}`, { cache:'no-cache' });
+  if(!res.ok) throw new Error(`Proxy HTTP ${res.status}`);
+  return await res.json();
 }
 
 async function fetchKommo(){
@@ -747,7 +691,6 @@ async function fetchKommo(){
     return { stages: Object.values(grouped), total: allLeads.length, source:'live' };
   }catch(e){
     console.warn('Kommo proxy error:', e);
-    dbg('fetchKommo', 'err', `Fallback a DEMO · ${e.message}`);
     return null;
   }
 }
@@ -1022,19 +965,11 @@ async function refresh(){
   window._lastSheetData = sheetData;
   renderCompras(sheetData);
   setTag('tSheet', sheetData.source==='live'?'Sheet ✓':'Sheet (estático)', sheetData.source==='live'?'ok':'');
-  dbg('Google Sheets', sheetData.source==='live'?'ok':'warn',
-    sheetData.source==='live'
-      ? `Live · ${sheetData.estados.length} facturas`
-      : 'Datos estáticos (sheet sin permisos públicos o error de fetch)');
   document.getElementById('lCompras').classList.remove('on');
 
   // ── 2. KOMMO ──
   let kommoData = await fetchKommo();
   const kommoOk = !!kommoData;
-  dbg('Kommo Pipeline', kommoOk?'ok':'err',
-    kommoOk
-      ? `✓ Live · ${kommoData.total} leads · ${kommoData.stages.length} etapas`
-      : '✗ Sin datos reales — usando DEMO · Verificar n8n workflow activo y credencial');
   if(!kommoData) kommoData = demoKommo();
   
   buildKommoDonut(kommoData.stages);
@@ -1090,7 +1025,6 @@ async function refresh(){
 
   // ── TIMESTAMP ──
   setTag('tLastUpd', 'Act: '+new Date().toLocaleTimeString('es-MX',{hour12:false}));
-  dbg('Dashboard', 'info', `Refresh completo · Rango: ${activeRange} · ${new Date().toLocaleString('es-MX')}`);
 }
 
 // ══════════════════════════════════════════════════════
@@ -1105,7 +1039,6 @@ const wkago = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
 document.getElementById('dfrom').value=wkago;
 document.getElementById('dto').value=today;
 
-dbg('Boot', 'info', `Iniciando · Proxy: ${N8N_PROXY} · Sheet: ${cfg.sheet_id||'no configurado'} · Kommo: ${cfg.kommo_domain||'no configurado'}`);
 refresh();
 setInterval(refresh, 5*60*1000); // auto-refresh 5min
 </script>
