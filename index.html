@@ -162,18 +162,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
 
-/* DEBUG PANEL */
-.debug-panel{background:#0a0b0f;border:1px solid #2a2d3e;border-radius:10px;padding:14px 18px;margin-bottom:20px;font-family:'JetBrains Mono',monospace;font-size:11px}
-.debug-title{color:#ffcc00;font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
-.debug-rows{display:flex;flex-direction:column;gap:6px}
-.debug-row{display:flex;align-items:flex-start;gap:10px;padding:6px 10px;border-radius:6px;background:#0f1016}
-.debug-row .dk{color:#7a7f96;min-width:160px;flex-shrink:0}
-.debug-row .dv{color:#e8eaf0;word-break:break-all}
-.debug-row.ok{border-left:2px solid #00ff88}
-.debug-row.err{border-left:2px solid #ff00aa}
-.debug-row.warn{border-left:2px solid #ffcc00}
-.debug-row.info{border-left:2px solid #00f5ff}
-.debug-toggle{background:transparent;border:1px solid #2a2d3e;color:#7a7f96;font-family:'JetBrains Mono',monospace;font-size:10px;padding:3px 10px;border-radius:4px;cursor:pointer}
 .debug-toggle:hover{border-color:#ffcc00;color:#ffcc00}
 
 </style>
@@ -250,15 +238,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 </div>
 
 
-<!-- DEBUG PANEL -->
-<div class="debug-panel" id="debugPanel">
-  <div class="debug-title">
-    <span>⚡ DEBUG — Estado de conexiones</span>
-    <button class="debug-toggle" onclick="document.getElementById('debugRows').style.display=document.getElementById('debugRows').style.display==='none'?'flex':'none'">ocultar</button>
-  </div>
-  <div class="debug-rows" id="debugRows"></div>
-</div>
-
 <!-- KPI STRIP -->
 <div class="kpis">
   <div class="kpi" style="--ac:var(--cy)">
@@ -295,12 +274,15 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
   <div class="panel">
     <div class="ldr" id="lChart"><div class="ring"></div></div>
     <div class="ph">
-      <div class="ptitle" style="--ac:var(--cy)"><div class="pdot"></div>Leads por Sucursal · Kommo</div>
+      <div class="ptitle" style="--ac:var(--cy)"><div class="pdot"></div>Ventas y Cobranzas por Sucursal · Hoy</div>
       <div class="stabs" id="sucTabs"></div>
     </div>
     <div class="pb">
       <div class="errmsg" id="errChart"></div>
-      <div class="cw"><canvas id="salesChart"></canvas></div>
+      <div class="slbl">Ventas (total vendido)</div>
+      <div class="cw" style="height:140px"><canvas id="salesChart"></canvas></div>
+      <div class="slbl">Cobranzas (efectivo + tarjeta + transferencia)</div>
+      <div class="cw" style="height:140px"><canvas id="collectionsChart"></canvas></div>
       <div class="leg" id="salesLeg"></div>
     </div>
   </div>
@@ -390,22 +372,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 // ══════════════════════════════════════════════════════
 //  DEBUG LOGGER
 // ══════════════════════════════════════════════════════
-const debugLog = [];
-function dbg(key, status, msg){
-  // status: ok | err | warn | info
-  const time = new Date().toLocaleTimeString('es-MX',{hour12:false});
-  debugLog.unshift({key, status, msg, time});
-  renderDebug();
-}
-function renderDebug(){
-  const el = document.getElementById('debugRows');
-  if(!el) return;
-  el.innerHTML = debugLog.slice(0,12).map(d=>`
-    <div class="debug-row ${d.status}">
-      <span class="dk">[${d.time}] ${d.key}</span>
-      <span class="dv">${d.msg}</span>
-    </div>`).join('');
-}
+function dbg(){}
 
 // ══════════════════════════════════════════════════════
 //  DEFAULTS — precargados con los datos del cliente
@@ -583,12 +550,12 @@ function filterSheetByRange(rows){
 //  SUCURSALES
 // ══════════════════════════════════════════════════════
 const SUCS = [
-  {id:'bodega', name:'Bodega', clr:'#00f5ff'},
-  {id:'loc1',   name:'Local 1',clr:'#ff00aa'},
-  {id:'loc2',   name:'Local 2',clr:'#00ff88'},
-  {id:'loc3',   name:'Local 3',clr:'#ffcc00'},
-  {id:'loc4',   name:'Local 4',clr:'#ff6600'},
-  {id:'loc5',   name:'Local 5',clr:'#aa55ff'},
+  {id:1, name:'Bodega', clr:'#00f5ff'},
+  {id:2, name:'Tienda 2 Barrio Alto', clr:'#ff00aa'},
+  {id:3, name:'Tienda 1 Zona Escolar', clr:'#00ff88'},
+  {id:5, name:'Tienda 4 La Presa', clr:'#ffcc00'},
+  {id:6, name:'Tienda 5 Bario Bajo', clr:'#ff6600'},
+  {id:7, name:'Bodega Tik Tok', clr:'#aa55ff'},
 ];
 let visSucs = new Set(SUCS.map(s=>s.id));
 let _lastSalesData = null;
@@ -831,20 +798,6 @@ function genDays(n){
   }
   return arr;
 }
-function demoCrmData(){
-  const n = activeRange==='month'?30:7;
-  const labels = genDays(n);
-  return {
-    labels,
-    datasets: SUCS.map(s=>({
-      label:s.name, id:s.id,
-      data: Array.from({length:n},()=>rnd(3,18)),
-      borderColor:s.clr, backgroundColor:s.clr+'18',
-      borderWidth:2, pointRadius:3, pointBackgroundColor:s.clr,
-      tension:0.4, fill:false,
-    }))
-  };
-}
 function demoWoo(){
   const n=activeRange==='month'?30:7;
   const labels=genDays(n);
@@ -879,31 +832,55 @@ function demoKommo(){
 Chart.defaults.color='#7a7f96';
 Chart.defaults.font.family="'JetBrains Mono',monospace";
 Chart.defaults.font.size=10;
-let salesCI=null, wooCI=null, kommoCI=null;
+let salesCI=null, collCI=null, wooCI=null, kommoCI=null;
 
-function buildSalesChart(data){
-  const ctx=document.getElementById('salesChart').getContext('2d');
-  if(salesCI) salesCI.destroy();
-  const vis = data.datasets.filter(d=>visSucs.has(d.id));
-  salesCI = new Chart(ctx,{
-    type:'line',
-    data:{labels:data.labels, datasets:vis},
+function buildStoreBarChart(canvasId, prevChart, stores, valueKey, label){
+  const ctx=document.getElementById(canvasId).getContext('2d');
+  if(prevChart) prevChart.destroy();
+  const vis = stores.filter(s=>visSucs.has(s.id));
+  return new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels: vis.map(s=>s.name),
+      datasets:[{
+        label,
+        data: vis.map(s=>s.value),
+        backgroundColor: vis.map(s=>s.clr+'33'),
+        borderColor: vis.map(s=>s.clr),
+        borderWidth:1, borderRadius:3,
+      }]
+    },
     options:{
       responsive:true, maintainAspectRatio:false,
-      interaction:{mode:'index',intersect:false},
       plugins:{
         legend:{display:false},
         tooltip:{
           backgroundColor:'#0f1016', borderColor:'#2a2d3e', borderWidth:1,
-          callbacks:{ label(c){ return `  ${c.dataset.label}: ${fnum(c.parsed.y)} leads`; } }
+          callbacks:{ label(c){ return `  ${label}: ${fmxn(c.parsed.y)}`; } }
         }
       },
       scales:{
-        x:{grid:{color:'rgba(28,30,42,.8)'}, ticks:{maxTicksLimit:8}},
-        y:{grid:{color:'rgba(28,30,42,.8)'}, ticks:{stepSize:1}}
+        x:{grid:{display:false}, ticks:{font:{size:10}}},
+        y:{grid:{color:'rgba(28,30,42,.8)'}, ticks:{callback:v=>fmxn(v)}}
       }
     }
   });
+}
+
+function buildSalesChart(storesData){
+  const stores = (storesData||[]).map(s=>{
+    const sc = SUCS.find(x=>x.id===s.id) || {};
+    const sm = s.summary||{};
+    return {
+      id: s.id, name: sc.name||s.name, clr: sc.clr||'#7a7f96',
+      ventas: sm.venta_total||0,
+      cobranzas: (sm.cobros_tarjeta||0)+(sm.transferencias||0)+(sm.total_entregado_efectivo||0)+(sm.total_corte_terminal||0),
+    };
+  });
+  salesCI = buildStoreBarChart('salesChart', salesCI,
+    stores.map(s=>({...s, value:s.ventas})), 'value', 'Ventas');
+  collCI = buildStoreBarChart('collectionsChart', collCI,
+    stores.map(s=>({...s, value:s.cobranzas})), 'value', 'Cobranzas');
 }
 
 function buildWooBar(labels, data){
@@ -1094,21 +1071,7 @@ async function refresh(){
   setTag('tKommo', kommoOk?'Kommo ✓':'Kommo (demo)', kommoOk?'ok':'');
   document.getElementById('lKommo').classList.remove('on');
 
-  // ── 3. LEADS CHART (Kommo data o demo) ──
-  // Build chart with Kommo lead data per day if available
-  let salesData;
-  if(kommoOk){
-    // For now use demo shape until we add date-range filtering on leads
-    salesData = demoCrmData();
-    // Override total from real data proportionally
-  } else {
-    salesData = demoCrmData();
-  }
-  _lastSalesData = salesData;
-  buildSalesChart(salesData);
-  document.getElementById('lChart').classList.remove('on');
-
-  // ── 4. WORDPRESS POS (ventas, cobranzas, stock) ──
+  // ── 3 & 4. WORDPRESS POS (ventas, cobranzas, stock) ──
   const wooRaw = await fetchWoo();
   const wooOk = !!wooRaw;
   dbg('WordPress POS', wooOk?'ok':'err',
@@ -1116,9 +1079,13 @@ async function refresh(){
       ? `✓ Live · ${wooRaw.stores.filter(s=>s.summary).length}/${wooRaw.stores.length} tiendas · stock ${wooRaw.stockTotal}`
       : '✗ Sin datos reales — usando DEMO · Verificar n8n workflow wp-pos-proxy');
   if(wooOk){
+    _lastSalesData = wooRaw.stores;
+    buildSalesChart(wooRaw.stores);
+    document.getElementById('lChart').classList.remove('on');
     renderWoo(wooRaw);
     setTag('wooTag','POS WordPress ✓','ok');
   } else {
+    document.getElementById('lChart').classList.remove('on');
     const demoW = demoWoo();
     buildWooBar(demoW.labels, demoW.byDay);
     document.getElementById('wooBody').innerHTML = demoW.orders.map(o=>`<tr>
