@@ -218,7 +218,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 <div class="ctrl-bar">
   <span class="ctrl-lbl">Período</span>
   <div class="tabs">
-    <button class="tb on" data-r="week"  onclick="setRange('week',this)">Semanal</button>
+    <button class="tb"    data-r="today" onclick="setRange('today',this)">Hoy</button>
+    <button class="tb on" data-r="week"  onclick="setRange('week',this)">Semanal (Lun-Dom)</button>
     <button class="tb"    data-r="month" onclick="setRange('month',this)">Mensual</button>
     <button class="tb"    data-r="custom" onclick="setRange('custom',this)">Personalizado</button>
   </div>
@@ -260,10 +261,25 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
     <div class="kpi-val" id="kCompras"><sup>$</sup>--</div>
     <div class="kpi-foot" id="kComprasFoot">bodega central</div>
   </div>
+  <div class="kpi" style="--ac:var(--gn)">
+    <div class="kpi-lbl">Ventas Totales</div>
+    <div class="kpi-val" id="kVentas"><sup>$</sup>--</div>
+    <div class="kpi-foot" id="kVentasFoot">todas las sucursales · período</div>
+  </div>
+  <div class="kpi" style="--ac:var(--cy)">
+    <div class="kpi-lbl">Cobranzas</div>
+    <div class="kpi-val" id="kCobranzas"><sup>$</sup>--</div>
+    <div class="kpi-foot" id="kCobranzasFoot">pedidos pasados a completado/pagado</div>
+  </div>
   <div class="kpi" style="--ac:var(--or)">
-    <div class="kpi-lbl">Pedidos Woo</div>
-    <div class="kpi-val" id="kWoo">--</div>
-    <div class="kpi-foot" id="kWooFoot">en período</div>
+    <div class="kpi-lbl">Cantidad Pedidos</div>
+    <div class="kpi-val" id="kPedidos">--</div>
+    <div class="kpi-foot" id="kPedidosFoot">en período · todas las sucursales</div>
+  </div>
+  <div class="kpi" style="--ac:var(--mg)">
+    <div class="kpi-lbl">Inventario agregado</div>
+    <div class="kpi-val" id="kInvHoy">--</div>
+    <div class="kpi-foot" id="kInvHoyFoot">productos nuevos · según período</div>
   </div>
 </div>
 
@@ -284,6 +300,20 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
       <div class="slbl">Cobranzas (efectivo + tarjeta + transferencia)</div>
       <div class="cw" style="height:140px"><canvas id="collectionsChart"></canvas></div>
       <div class="leg" id="salesLeg"></div>
+    </div>
+  </div>
+
+  <!-- PEDIDOS POR SUCURSAL (esqueleto — pendiente endpoint pos-orders) -->
+  <div class="panel">
+    <div class="ldr" id="lPedidos"><div class="ring"></div></div>
+    <div class="ph">
+      <div class="ptitle" style="--ac:var(--or)"><div class="pdot" style="background:var(--or);box-shadow:0 0 8px var(--or)"></div>Pedidos por Sucursal</div>
+      <div class="stabs" id="pedTabs"></div>
+    </div>
+    <div class="pb">
+      <div class="errmsg" id="errPedidos">Pendiente: requiere que se resuelva el endpoint /pos-orders del plugin (actualmente devuelve error "store_id es requerido" sin importar el valor enviado).</div>
+      <div class="cw" style="height:160px"><canvas id="pedidosChart"></canvas></div>
+      <div class="leg" id="pedidosLeg"></div>
     </div>
   </div>
 
@@ -504,10 +534,17 @@ function setRange(r, btn){
 }
 function getRange(){
   const now = new Date();
-  let from = new Date();
-  if(activeRange==='week') from.setDate(now.getDate()-7);
-  else if(activeRange==='month') from.setDate(now.getDate()-30);
-  else{
+  let from = new Date(), to = new Date();
+  if(activeRange==='today'){
+    // sin rango — solo el día de hoy
+  } else if(activeRange==='week'){
+    // semana de Lunes a Domingo (no "últimos 7 días")
+    const dow = (now.getDay()+6)%7; // 0=Lunes ... 6=Domingo
+    from.setDate(now.getDate()-dow);
+    to.setDate(from.getDate()+6);
+  } else if(activeRange==='month'){
+    from.setDate(now.getDate()-30);
+  } else{
     return {
       from: document.getElementById('dfrom').value+'T00:00:00',
       to:   document.getElementById('dto').value+'T23:59:59',
@@ -517,9 +554,9 @@ function getRange(){
   }
   return {
     from:     from.toISOString().slice(0,10)+'T00:00:00',
-    to:       now.toISOString().slice(0,10)+'T23:59:59',
+    to:       to.toISOString().slice(0,10)+'T23:59:59',
     fromDate: from,
-    toDate:   now
+    toDate:   to
   };
 }
 
@@ -576,6 +613,62 @@ function buildSucUI(){
     };
     tabsEl.appendChild(b);
     legEl.innerHTML += `<div class="leg-i"><div class="leg-d" style="background:${s.clr}"></div>${s.name}</div>`;
+  });
+}
+
+// ══════════════════════════════════════════════════════
+//  PEDIDOS POR SUCURSAL — esqueleto (sin datos hasta resolver /pos-orders)
+// ══════════════════════════════════════════════════════
+let visPedSucs = new Set(SUCS.map(s=>s.id));
+let pedidosCI = null;
+
+function buildPedidosUI(){
+  const tabsEl = document.getElementById('pedTabs');
+  const legEl  = document.getElementById('pedidosLeg');
+  tabsEl.innerHTML=''; legEl.innerHTML='';
+  SUCS.forEach(s=>{
+    const b = document.createElement('button');
+    b.className='stb on'; b.dataset.id=s.id;
+    b.style.setProperty('--sc',s.clr);
+    b.textContent = s.name;
+    b.onclick=()=>{
+      if(visPedSucs.has(s.id)) visPedSucs.delete(s.id); else visPedSucs.add(s.id);
+      b.classList.toggle('on');
+      buildPedidosChart(null);
+    };
+    tabsEl.appendChild(b);
+    legEl.innerHTML += `<div class="leg-i"><div class="leg-d" style="background:${s.clr}"></div>${s.name}</div>`;
+  });
+}
+
+// pedidosData: [{id, count}] por sucursal — null mientras no haya fuente real
+function buildPedidosChart(pedidosData){
+  const ctx=document.getElementById('pedidosChart').getContext('2d');
+  if(pedidosCI) pedidosCI.destroy();
+  const vis = SUCS.filter(s=>visPedSucs.has(s.id));
+  const counts = pedidosData
+    ? vis.map(s=>(pedidosData.find(p=>p.id===s.id)||{}).count||0)
+    : vis.map(()=>0);
+  pedidosCI = new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels: vis.map(s=>s.name),
+      datasets:[{
+        label:'Pedidos',
+        data: counts,
+        backgroundColor: vis.map(s=>s.clr+'33'),
+        borderColor: vis.map(s=>s.clr),
+        borderWidth:1, borderRadius:3,
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{grid:{display:false}, ticks:{font:{size:10}}},
+        y:{grid:{color:'rgba(28,30,42,.8)'}, ticks:{stepSize:1}}
+      }
+    }
   });
 }
 
@@ -1033,7 +1126,7 @@ function renderWoo(wooData){
 // ══════════════════════════════════════════════════════
 async function refresh(){
   // loaders on
-  ['lChart','lKommo','lCompras','lWoo'].forEach(id=>document.getElementById(id).classList.add('on'));
+  ['lChart','lKommo','lCompras','lWoo','lPedidos'].forEach(id=>document.getElementById(id).classList.add('on'));
   setTag('tLastUpd','Actualizando…');
 
   // ── 1. GOOGLE SHEETS ──
@@ -1084,6 +1177,23 @@ async function refresh(){
     document.getElementById('lChart').classList.remove('on');
     renderWoo(wooRaw);
     setTag('wooTag','POS WordPress ✓','ok');
+
+    // ── KPIs principales: Ventas y Cobranzas totales (datos reales) ──
+    const totalVentas    = wooRaw.stores.reduce((a,s)=>a+(s.summary?.venta_total||0),0);
+    const totalCobranzas = wooRaw.stores.reduce((a,s)=>{
+      const sm = s.summary||{};
+      return a+(sm.cobros_tarjeta||0)+(sm.transferencias||0)+(sm.total_entregado_efectivo||0)+(sm.total_corte_terminal||0);
+    },0);
+    document.getElementById('kVentas').innerHTML    = `<sup>$</sup>${fmxn(totalVentas).replace('$','')}`;
+    document.getElementById('kVentasFoot').textContent = `${wooRaw.stores.length} sucursales · ${activeRange==='today'?'hoy':activeRange==='week'?'esta semana':'período'}`;
+    document.getElementById('kCobranzas').innerHTML = `<sup>$</sup>${fmxn(totalCobranzas).replace('$','')}`;
+    document.getElementById('kCobranzasFoot').textContent = 'efectivo + tarjeta + transferencia · hoy';
+
+    // ── KPIs esqueleto (pendiente /pos-orders) ──
+    document.getElementById('kPedidos').textContent    = '--';
+    document.getElementById('kPedidosFoot').textContent = 'pendiente endpoint /pos-orders';
+    document.getElementById('kInvHoy').textContent     = `${wooRaw.stockTotal}`;
+    document.getElementById('kInvHoyFoot').textContent = `uds. en stock · ${wooRaw.lowStock} bajo mínimo`;
   } else {
     document.getElementById('lChart').classList.remove('on');
     const demoW = demoWoo();
@@ -1100,6 +1210,7 @@ async function refresh(){
     setTag('wooTag','POS WordPress (demo)');
   }
   document.getElementById('lWoo').classList.remove('on');
+  document.getElementById('lPedidos').classList.remove('on');
 
   // ── TIMESTAMP ──
   setTag('tLastUpd', 'Act: '+new Date().toLocaleTimeString('es-MX',{hour12:false}));
@@ -1111,6 +1222,8 @@ async function refresh(){
 // ══════════════════════════════════════════════════════
 loadConfig();
 buildSucUI();
+buildPedidosUI();
+buildPedidosChart(null);
 
 // default custom dates
 const today = new Date().toISOString().slice(0,10);
