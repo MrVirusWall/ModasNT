@@ -637,60 +637,64 @@ async function fetchSheet(){
 // ══════════════════════════════════════════════════════
 //  KOMMO FETCH
 // ══════════════════════════════════════════════════════
-// ── KOMMO via n8n proxy (evita CORS) ──────────────────
-// URL base del proxy: https://robot.iallama.com/webhook/kommo-proxy
-// Parámetro ?endpoint=pipelines|leads|statuses&pipeline_id=xxx&page=N
-const N8N_PROXY = 'https://robot.iallama.com/webhook/kommo-proxy';
-
-async function kommoProxy(endpoint, params={}){
-  const qs = new URLSearchParams({ endpoint, ...params }).toString();
-  const res = await fetch(`${N8N_PROXY}?${qs}`, { cache:'no-cache' });
-  if(!res.ok) throw new Error(`Proxy HTTP ${res.status}`);
-  return await res.json();
-}
-
 async function fetchKommo(){
+  if(!cfg.kommo_domain || !cfg.kommo_token) return null;
   try{
-    // 1. Pipelines
-    const pipesData = await kommoProxy('pipelines');
-    const pipes = pipesData._embedded?.pipelines || [];
-    if(!pipes.length) throw new Error('No pipelines found');
-
-    const pipelineId = cfg.kommo_pipeline || pipes[0].id;
-    document.getElementById('kPipeTag').textContent = pipes.map(p=>p.name).join(' · ');
-
-    // 2. Statuses for name/color mapping
-    let statusMap = {};
-    try{
-      const sData = await kommoProxy('statuses', { pipeline_id: pipelineId });
-      (sData._embedded?.statuses||[]).forEach(s=>{
-        statusMap[s.id] = { name: s.name, color: s.color || '#7a7f96' };
+    // Fetch pipelines first if no pipeline ID
+    let pipelineId = cfg.kommo_pipeline;
+    
+    if(!pipelineId){
+      const pRes = await fetch(`https://${cfg.kommo_domain}/api/v4/leads/pipelines`, {
+        headers:{ Authorization:`Bearer ${cfg.kommo_token}`, 'Content-Type':'application/json' }
       });
-    }catch(e){ console.warn('statuses fetch failed',e); }
+      if(pRes.ok){
+        const pData = await pRes.json();
+        const pipes = pData._embedded?.pipelines||[];
+        if(pipes.length) pipelineId = pipes[0].id; // use first pipeline
+        document.getElementById('kPipeTag').textContent = pipes.map(p=>p.name).join(' · ')||'pipeline';
+      }
+    }
 
-    // 3. Leads (paginated, max 5 pages)
-    let allLeads = [], page = 1, more = true;
+    // Fetch leads
+    let allLeads = []; let page = 1; let more = true;
     while(more && page <= 5){
-      const data = await kommoProxy('leads', { pipeline_id: pipelineId, page });
-      const leads = data._embedded?.leads || [];
+      const url = `https://${cfg.kommo_domain}/api/v4/leads?limit=250&page=${page}${pipelineId?'&filter[pipeline_id]='+pipelineId:''}`;
+      const res = await fetch(url, {
+        headers:{ Authorization:`Bearer ${cfg.kommo_token}`, 'Content-Type':'application/json' }
+      });
+      if(!res.ok) break;
+      const data = await res.json();
+      const leads = data._embedded?.leads||[];
       allLeads = allLeads.concat(leads);
       more = leads.length === 250;
       page++;
     }
 
-    // 4. Group by status
+    // Fetch pipeline statuses for names
+    let statusMap = {};
+    if(pipelineId){
+      const sRes = await fetch(`https://${cfg.kommo_domain}/api/v4/leads/pipelines/${pipelineId}/statuses`, {
+        headers:{ Authorization:`Bearer ${cfg.kommo_token}` }
+      });
+      if(sRes.ok){
+        const sData = await sRes.json();
+        (sData._embedded?.statuses||[]).forEach(s=>{ statusMap[s.id] = {name:s.name, color:s.color}; });
+      }
+    }
+
+    // Group by status
     const grouped = {};
     allLeads.forEach(lead=>{
       const sid = lead.status_id;
       const info = statusMap[sid] || { name:`Etapa ${sid}`, color:'#7a7f96' };
       if(!grouped[sid]) grouped[sid] = { name:info.name, color:info.color, count:0, value:0 };
       grouped[sid].count++;
-      grouped[sid].value += lead.price || 0;
+      grouped[sid].value += lead.price||0;
     });
 
     return { stages: Object.values(grouped), total: allLeads.length, source:'live' };
   }catch(e){
-    console.warn('Kommo proxy error:', e);
+    console.warn('Kommo error:', e);
     return null;
   }
 }
