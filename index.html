@@ -894,69 +894,96 @@ async function wcProxy(endpoint, params={}){
   }catch(e){ throw e; }
 }
 
+function parseWCOrder(o){
+  const meta = {};
+  (o.meta_data||[]).forEach(m=>{ meta[m.key]=m.value; });
+  const payMethods = meta['_pos_payment_methods'] || [];
+  const hasCash     = payMethods.some(p=>p.method==='cash');
+  const hasCard     = payMethods.some(p=>['card','tarjeta','terminal'].includes(p.method));
+  const hasTransfer = payMethods.some(p=>['transfer','transferencia','transfer_bbva'].includes(p.method));
+  return {
+    id:           o.id,
+    status:       o.status,
+    total:        parseFloat(o.total)||0,
+    dateCreated:  (o.date_created||'').slice(0,10),
+    dateCompleted:(o.date_completed||'').slice(0,10),
+    storeId:      parseInt(meta['_pos_store_id'])||null,
+    cashierId:    meta['_pos_cashier_id']||null,
+    isPOS:        !!meta['_created_via_pos'],
+    hasCash, hasCard, hasTransfer,
+  };
+}
+
+async function fetchWCPaged(params, maxPages){
+  let all=[], page=1, more=true;
+  while(more && page<=maxPages){
+    const d = await wcProxy('orders', { ...params, per_page:100, page });
+    const batch = d.result || [];
+    all = all.concat(batch);
+    more = batch.length===100;
+    page++;
+  }
+  return all.map(parseWCOrder);
+}
+
 async function fetchWC(){
   try{
     const { from, to } = getRange();
-    // Paginamos hasta 5 páginas (~500 órdenes); suficiente para semana/mes ligero
-    const maxPages = activeRange==='today' ? 1 : activeRange==='week' ? 3 : 5;
-    let allOrders=[], page=1, more=true;
-    while(more && page<=maxPages){
-      const d = await wcProxy('orders', { after:from, before:to, per_page:100, page });
-      const batch = d.result || [];
-      allOrders = allOrders.concat(batch);
-      more = batch.length===100;
-      page++;
-    }
+    const maxPg = activeRange==='today' ? 1 : activeRange==='week' ? 3 : 5;
 
-    // Parsear cada orden extrayendo campos del meta_data
-    const orders = allOrders.map(o=>{
-      const meta = {};
-      (o.meta_data||[]).forEach(m=>{ meta[m.key]=m.value; });
-      const payMethods = meta['_pos_payment_methods'] || [];
-      const hasCash     = payMethods.some(p=>p.method==='cash');
-      const hasCard     = payMethods.some(p=>['card','tarjeta','terminal'].includes(p.method));
-      const hasTransfer = payMethods.some(p=>['transfer','transferencia','transfer_bbva'].includes(p.method));
-      return {
-        id:         o.id,
-        status:     o.status,
-        total:      parseFloat(o.total)||0,
-        date:       (o.date_created||'').slice(0,10),
-        storeId:    parseInt(meta['_pos_store_id'])||null,
-        cashierId:  meta['_pos_cashier_id']||null,
-        isPOS:      !!meta['_created_via_pos'],
-        hasCash, hasCard, hasTransfer,
-        items:      (o.line_items||[]).length,
-      };
+    // ── Llamada 1: VENTAS — órdenes creadas en el período (cualquier estado) ──
+    const ventaOrders = await fetchWCPaged({ after:from, before:to }, maxPg);
+
+    // ── Llamada 2: COBRANZAS — órdenes completadas (por Charly) en el período ──
+    // Usamos modified_after para que WC filtre server-side, luego filtramos
+    // client-side por date_completed para mayor precisión.
+    const cobRaw = await fetchWCPaged({
+      status: 'completed',
+      modified_after:  from,
+      modified_before: to,
+    }, maxPg);
+    // Mantener solo las que Charly completó dentro del período
+    const cobranzaOrders = cobRaw.filter(o=>
+      o.dateCompleted >= from.slice(0,10) &&
+      o.dateCompleted <= to.slice(0,10)
+    );
+
+    // ── Totales de VENTAS ──
+    const totalVentas     = ventaOrders.reduce((a,o)=>a+o.total, 0);
+    const cobradoInm      = ventaOrders.filter(o=>o.hasCash||o.hasCard).reduce((a,o)=>a+o.total,0);
+    const pendienteCharly = ventaOrders.filter(o=>o.hasTransfer&&o.status==='processing').reduce((a,o)=>a+o.total,0);
+
+    // ── Totales de COBRANZAS (por date_completed en el período) ──
+    const totalCobranzas  = cobranzaOrders.reduce((a,o)=>a+o.total, 0);
+
+    // ── Por sucursal (ventas) ──
+    const byStoreMap = {};
+    ventaOrders.forEach(o=>{
+      const sid = o.storeId; if(!sid) return;
+      if(!byStoreMap[sid]) byStoreMap[sid] = { id:sid, ventas:0, pedidos:0, pendiente:0, cobradoInm:0 };
+      byStoreMap[sid].ventas    += o.total;
+      byStoreMap[sid].pedidos   += 1;
+      if(o.hasTransfer&&o.status==='processing') byStoreMap[sid].pendiente  += o.total;
+      if(o.hasCash||o.hasCard)                   byStoreMap[sid].cobradoInm += o.total;
     });
-
-    // Totales globales
-    const totalVentas    = orders.reduce((a,o)=>a+o.total, 0);
-    // Cobrado inmediato: efectivo o tarjeta (sin importar status)
-    const cobradoInm     = orders.filter(o=>o.hasCash||o.hasCard).reduce((a,o)=>a+o.total,0);
-    // Pendiente Charly: transferencia en processing (no conciliado aún)
-    const pendienteCharly= orders.filter(o=>o.hasTransfer&&o.status==='processing').reduce((a,o)=>a+o.total,0);
-    // Conciliado: status completed
-    const conciliado     = orders.filter(o=>o.status==='completed').reduce((a,o)=>a+o.total,0);
-    // Cobranzas total = cobrado inmediato + conciliado (sin doble contar)
-    const totalCobranzas = cobradoInm + conciliado;
-
-    // Agrupado por sucursal
-    const byStore = {};
-    orders.forEach(o=>{
-      const sid = o.storeId;
-      if(!sid) return;
-      if(!byStore[sid]) byStore[sid] = { id:sid, ventas:0, cobranzas:0, pedidos:0, pendiente:0 };
-      byStore[sid].ventas   += o.total;
-      byStore[sid].pedidos  += 1;
-      if(o.hasCash||o.hasCard||o.status==='completed') byStore[sid].cobranzas += o.total;
-      if(o.hasTransfer&&o.status==='processing')        byStore[sid].pendiente += o.total;
+    // Agregar cobranzas de Charly por sucursal
+    cobranzaOrders.forEach(o=>{
+      const sid = o.storeId; if(!sid) return;
+      if(!byStoreMap[sid]) byStoreMap[sid] = { id:sid, ventas:0, pedidos:0, pendiente:0, cobradoInm:0 };
+      byStoreMap[sid].cobranzas = (byStoreMap[sid].cobranzas||0) + o.total;
     });
+    const byStore = Object.values(byStoreMap).map(s=>({
+      ...s,
+      cobranzas: (s.cobranzas||0) + (s.cobradoInm||0),
+    }));
 
     return {
-      orders, totalVentas, totalCobranzas, cobradoInm,
-      pendienteCharly, conciliado,
-      totalPedidos: orders.length,
-      byStore: Object.values(byStore),
+      ventaOrders, cobranzaOrders,
+      totalVentas, totalCobranzas,
+      cobradoInm, pendienteCharly,
+      totalPedidos:    ventaOrders.length,
+      totalConciliados:cobranzaOrders.length,
+      byStore,
       source: 'live',
     };
   }catch(e){
@@ -1282,11 +1309,11 @@ async function refresh(){
     document.getElementById('kCobranzas').innerHTML =
       `<sup>$</sup>${fmxn(wcRaw.totalCobranzas).replace('$','')}`;
     document.getElementById('kCobranzasFoot').textContent =
-      `efectivo/tarjeta $${fmxn(wcRaw.cobradoInm).replace('$','')} · pendiente Charly $${fmxn(wcRaw.pendienteCharly).replace('$','')}`;
+      `${wcRaw.totalConciliados} conciliados · efectivo/tarjeta $${fmxn(wcRaw.cobradoInm).replace('$','')} · pend. Charly $${fmxn(wcRaw.pendienteCharly).replace('$','')}`;
 
     document.getElementById('kPedidos').textContent = fnum(wcRaw.totalPedidos);
     document.getElementById('kPedidosFoot').textContent =
-      `${wcRaw.orders.filter(o=>o.status==='completed').length} conciliados · ${wcRaw.orders.filter(o=>o.hasTransfer&&o.status==='processing').length} pend. Charly`;
+      `${wcRaw.totalConciliados} conciliados · ${wcRaw.ventaOrders.filter(o=>o.hasTransfer&&o.status==='processing').length} pend. Charly`;
 
   } else {
     document.getElementById('lChart').classList.remove('on');
