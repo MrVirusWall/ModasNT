@@ -880,6 +880,92 @@ async function fetchWoo(){
 }
 
 // ══════════════════════════════════════════════════════
+//  WOOCOMMERCE FETCH (órdenes reales con rango de fechas)
+// ══════════════════════════════════════════════════════
+const WC_PROXY = 'https://robot.iallama.com/webhook/wc-proxy';
+
+async function wcProxy(endpoint, params={}){
+  const qs = new URLSearchParams({ endpoint, ...params }).toString();
+  try{
+    const res = await fetch(`${WC_PROXY}?${qs}`, { cache:'no-cache' });
+    const text = await res.text();
+    if(!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0,200)}`);
+    return JSON.parse(text);
+  }catch(e){ throw e; }
+}
+
+async function fetchWC(){
+  try{
+    const { from, to } = getRange();
+    // Paginamos hasta 5 páginas (~500 órdenes); suficiente para semana/mes ligero
+    const maxPages = activeRange==='today' ? 1 : activeRange==='week' ? 3 : 5;
+    let allOrders=[], page=1, more=true;
+    while(more && page<=maxPages){
+      const d = await wcProxy('orders', { after:from, before:to, per_page:100, page });
+      const batch = d.result || [];
+      allOrders = allOrders.concat(batch);
+      more = batch.length===100;
+      page++;
+    }
+
+    // Parsear cada orden extrayendo campos del meta_data
+    const orders = allOrders.map(o=>{
+      const meta = {};
+      (o.meta_data||[]).forEach(m=>{ meta[m.key]=m.value; });
+      const payMethods = meta['_pos_payment_methods'] || [];
+      const hasCash     = payMethods.some(p=>p.method==='cash');
+      const hasCard     = payMethods.some(p=>['card','tarjeta','terminal'].includes(p.method));
+      const hasTransfer = payMethods.some(p=>['transfer','transferencia','transfer_bbva'].includes(p.method));
+      return {
+        id:         o.id,
+        status:     o.status,
+        total:      parseFloat(o.total)||0,
+        date:       (o.date_created||'').slice(0,10),
+        storeId:    parseInt(meta['_pos_store_id'])||null,
+        cashierId:  meta['_pos_cashier_id']||null,
+        isPOS:      !!meta['_created_via_pos'],
+        hasCash, hasCard, hasTransfer,
+        items:      (o.line_items||[]).length,
+      };
+    });
+
+    // Totales globales
+    const totalVentas    = orders.reduce((a,o)=>a+o.total, 0);
+    // Cobrado inmediato: efectivo o tarjeta (sin importar status)
+    const cobradoInm     = orders.filter(o=>o.hasCash||o.hasCard).reduce((a,o)=>a+o.total,0);
+    // Pendiente Charly: transferencia en processing (no conciliado aún)
+    const pendienteCharly= orders.filter(o=>o.hasTransfer&&o.status==='processing').reduce((a,o)=>a+o.total,0);
+    // Conciliado: status completed
+    const conciliado     = orders.filter(o=>o.status==='completed').reduce((a,o)=>a+o.total,0);
+    // Cobranzas total = cobrado inmediato + conciliado (sin doble contar)
+    const totalCobranzas = cobradoInm + conciliado;
+
+    // Agrupado por sucursal
+    const byStore = {};
+    orders.forEach(o=>{
+      const sid = o.storeId;
+      if(!sid) return;
+      if(!byStore[sid]) byStore[sid] = { id:sid, ventas:0, cobranzas:0, pedidos:0, pendiente:0 };
+      byStore[sid].ventas   += o.total;
+      byStore[sid].pedidos  += 1;
+      if(o.hasCash||o.hasCard||o.status==='completed') byStore[sid].cobranzas += o.total;
+      if(o.hasTransfer&&o.status==='processing')        byStore[sid].pendiente += o.total;
+    });
+
+    return {
+      orders, totalVentas, totalCobranzas, cobradoInm,
+      pendienteCharly, conciliado,
+      totalPedidos: orders.length,
+      byStore: Object.values(byStore),
+      source: 'live',
+    };
+  }catch(e){
+    console.warn('WooCommerce fetch error:', e);
+    return null;
+  }
+}
+
+// ══════════════════════════════════════════════════════
 //  DEMO DATA
 // ══════════════════════════════════════════════════════
 function rnd(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
@@ -960,19 +1046,21 @@ function buildStoreBarChart(canvasId, prevChart, stores, valueKey, label){
   });
 }
 
+// storesData: array de {id, ventas, cobranzas} — viene de wcRaw.byStore
 function buildSalesChart(storesData){
   const stores = (storesData||[]).map(s=>{
     const sc = SUCS.find(x=>x.id===s.id) || {};
-    const sm = s.summary||{};
     return {
-      id: s.id, name: sc.name||s.name, clr: sc.clr||'#7a7f96',
-      ventas: sm.venta_total||0,
-      cobranzas: (sm.cobros_tarjeta||0)+(sm.transferencias||0)+(sm.total_entregado_efectivo||0)+(sm.total_corte_terminal||0),
+      id: s.id,
+      name: sc.name || `Tienda ${s.id}`,
+      clr: sc.clr || '#7a7f96',
+      ventas:    s.ventas    || 0,
+      cobranzas: s.cobranzas || 0,
     };
   });
   salesCI = buildStoreBarChart('salesChart', salesCI,
-    stores.map(s=>({...s, value:s.ventas})), 'value', 'Ventas');
-  collCI = buildStoreBarChart('collectionsChart', collCI,
+    stores.map(s=>({...s, value:s.ventas})),    'value', 'Ventas');
+  collCI  = buildStoreBarChart('collectionsChart', collCI,
     stores.map(s=>({...s, value:s.cobranzas})), 'value', 'Cobranzas');
 }
 
@@ -1164,38 +1252,54 @@ async function refresh(){
   setTag('tKommo', kommoOk?'Kommo ✓':'Kommo (demo)', kommoOk?'ok':'');
   document.getElementById('lKommo').classList.remove('on');
 
-  // ── 3 & 4. WORDPRESS POS (ventas, cobranzas, stock) ──
+  // ── 3. WOOCOMMERCE — órdenes reales con rango de fechas ──
+  const wcRaw = await fetchWC();
+  const wcOk  = !!wcRaw;
+
+  // ── 4. WORDPRESS POS — solo stock e inventario ──
   const wooRaw = await fetchWoo();
-  const wooOk = !!wooRaw;
-  dbg('WordPress POS', wooOk?'ok':'err',
-    wooOk
-      ? `✓ Live · ${wooRaw.stores.filter(s=>s.summary).length}/${wooRaw.stores.length} tiendas · stock ${wooRaw.stockTotal}`
-      : '✗ Sin datos reales — usando DEMO · Verificar n8n workflow wp-pos-proxy');
-  if(wooOk){
-    _lastSalesData = wooRaw.stores;
-    buildSalesChart(wooRaw.stores);
+  const wooOk  = !!wooRaw;
+
+  const rangoLabel = activeRange==='today'?'hoy':activeRange==='week'?'esta semana':activeRange==='month'?'este mes':'período';
+
+  if(wcOk){
+    // Gráficos de ventas y cobranzas por sucursal
+    _lastSalesData = wcRaw.byStore;
+    buildSalesChart(wcRaw.byStore);
     document.getElementById('lChart').classList.remove('on');
-    renderWoo(wooRaw);
-    setTag('wooTag','POS WordPress ✓','ok');
 
-    // ── KPIs principales: Ventas y Cobranzas totales (datos reales) ──
-    const totalVentas    = wooRaw.stores.reduce((a,s)=>a+(s.summary?.venta_total||0),0);
-    const totalCobranzas = wooRaw.stores.reduce((a,s)=>{
-      const sm = s.summary||{};
-      return a+(sm.cobros_tarjeta||0)+(sm.transferencias||0)+(sm.total_entregado_efectivo||0)+(sm.total_corte_terminal||0);
-    },0);
-    document.getElementById('kVentas').innerHTML    = `<sup>$</sup>${fmxn(totalVentas).replace('$','')}`;
-    document.getElementById('kVentasFoot').textContent = `${wooRaw.stores.length} sucursales · ${activeRange==='today'?'hoy':activeRange==='week'?'esta semana':'período'}`;
-    document.getElementById('kCobranzas').innerHTML = `<sup>$</sup>${fmxn(totalCobranzas).replace('$','')}`;
-    document.getElementById('kCobranzasFoot').textContent = 'efectivo + tarjeta + transferencia · hoy';
+    // Gráfico de pedidos por sucursal
+    buildPedidosChart(wcRaw.byStore.map(s=>({id:s.id, count:s.pedidos})));
 
-    // ── KPIs esqueleto (pendiente /pos-orders) ──
-    document.getElementById('kPedidos').textContent    = '--';
-    document.getElementById('kPedidosFoot').textContent = 'pendiente endpoint /pos-orders';
-    document.getElementById('kInvHoy').textContent     = `${wooRaw.stockTotal}`;
-    document.getElementById('kInvHoyFoot').textContent = `uds. en stock · ${wooRaw.lowStock} bajo mínimo`;
+    setTag('wooTag','WooCommerce ✓','ok');
+
+    // KPIs
+    document.getElementById('kVentas').innerHTML =
+      `<sup>$</sup>${fmxn(wcRaw.totalVentas).replace('$','')}`;
+    document.getElementById('kVentasFoot').textContent =
+      `${wcRaw.totalPedidos} pedidos · ${rangoLabel}`;
+
+    document.getElementById('kCobranzas').innerHTML =
+      `<sup>$</sup>${fmxn(wcRaw.totalCobranzas).replace('$','')}`;
+    document.getElementById('kCobranzasFoot').textContent =
+      `efectivo/tarjeta $${fmxn(wcRaw.cobradoInm).replace('$','')} · pendiente Charly $${fmxn(wcRaw.pendienteCharly).replace('$','')}`;
+
+    document.getElementById('kPedidos').textContent = fnum(wcRaw.totalPedidos);
+    document.getElementById('kPedidosFoot').textContent =
+      `${wcRaw.orders.filter(o=>o.status==='completed').length} conciliados · ${wcRaw.orders.filter(o=>o.hasTransfer&&o.status==='processing').length} pend. Charly`;
+
   } else {
     document.getElementById('lChart').classList.remove('on');
+  }
+
+  // Stock desde PDV Lat
+  if(wooOk){
+    document.getElementById('kInvHoy').textContent     = fnum(wooRaw.stockTotal);
+    document.getElementById('kInvHoyFoot').textContent = `uds. en stock · ${wooRaw.lowStock} bajo mínimo`;
+    renderWoo(wooRaw);
+  }
+
+  if(!wcOk){
     const demoW = demoWoo();
     buildWooBar(demoW.labels, demoW.byDay);
     document.getElementById('wooBody').innerHTML = demoW.orders.map(o=>`<tr>
