@@ -234,28 +234,12 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
   <div style="margin-left:auto;display:flex;gap:8px">
     <div class="tag" id="tLastUpd">--</div>
     <div class="tag" id="tSheet">Sheet: --</div>
-    <div class="tag" id="tKommo">Kommo: --</div>
   </div>
 </div>
 
 
 <!-- KPI STRIP -->
 <div class="kpis">
-  <div class="kpi" style="--ac:var(--cy)">
-    <div class="kpi-lbl">Leads Kommo</div>
-    <div class="kpi-val" id="kLeads">--</div>
-    <div class="kpi-foot" id="kLeadsFoot">en pipeline</div>
-  </div>
-  <div class="kpi" style="--ac:var(--mg)">
-    <div class="kpi-lbl">Leads Nuevos</div>
-    <div class="kpi-val" id="kNuevos">--</div>
-    <div class="kpi-foot" id="kNuevosFoot">primer etapa</div>
-  </div>
-  <div class="kpi" style="--ac:var(--gn)">
-    <div class="kpi-lbl">Ganados</div>
-    <div class="kpi-val" id="kGanados">--</div>
-    <div class="kpi-foot" id="kGanadosFoot">cerrados ganados</div>
-  </div>
   <div class="kpi" style="--ac:var(--yw)">
     <div class="kpi-lbl">Total Compras</div>
     <div class="kpi-val" id="kCompras"><sup>$</sup>--</div>
@@ -317,24 +301,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
     </div>
   </div>
 
-  <!-- KOMMO PIPELINE -->
-  <div class="panel">
-    <div class="ldr" id="lKommo"><div class="ring"></div></div>
-    <div class="ph">
-      <div class="ptitle" style="--ac:var(--mg)"><div class="pdot" style="background:var(--mg);box-shadow:0 0 8px var(--mg)"></div>Pipeline Kommo</div>
-      <div class="pmeta"><div class="tag" id="kPipeTag">--</div></div>
-    </div>
-    <div class="pb">
-      <div class="errmsg" id="errKommo"></div>
-      <div class="slbl">Distribución</div>
-      <div class="donut-w">
-        <canvas id="kDonut" width="100" height="100" style="flex-shrink:0"></canvas>
-        <div class="donut-lg" id="kDonutLeg"></div>
-      </div>
-      <div class="slbl">Por etapa</div>
-      <div class="kstages" id="kStages"></div>
-    </div>
-  </div>
 
 </div>
 
@@ -532,13 +498,29 @@ function setRange(r, btn){
   document.getElementById('customDts').style.display = r==='custom'?'flex':'none';
   if(r!=='custom') refresh();
 }
+// Devuelve la fecha/hora actual en zona México (America/Mexico_City)
+function nowMX(){
+  // Usamos Intl para obtener las partes en hora local de México
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p=>[p.type,p.value]));
+  // Construir un Date "local" con los valores MX para poder hacer aritmética de días
+  return new Date(
+    parseInt(parts.year), parseInt(parts.month)-1, parseInt(parts.day),
+    parseInt(parts.hour), parseInt(parts.minute), parseInt(parts.second)
+  );
+}
+
 function getRange(){
-  const now = new Date();
-  let from = new Date(), to = new Date();
+  const now = nowMX();
+  let from = new Date(now), to = new Date(now);
   if(activeRange==='today'){
-    // sin rango — solo el día de hoy
+    // solo el día de hoy en hora México
   } else if(activeRange==='week'){
-    // semana de Lunes a Domingo (no "últimos 7 días")
+    // semana de Lunes a Domingo (hora México)
     const dow = (now.getDay()+6)%7; // 0=Lunes ... 6=Domingo
     from.setDate(now.getDate()-dow);
     to.setDate(from.getDate()+6);
@@ -552,11 +534,14 @@ function getRange(){
       toDate:   new Date(document.getElementById('dto').value+'T23:59:59'),
     };
   }
+  // Formatear como YYYY-MM-DD usando los valores locales del Date (ya en hora MX)
+  const pad = n => String(n).padStart(2,'0');
+  const fmtDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   return {
-    from:     from.toISOString().slice(0,10)+'T00:00:00',
-    to:       to.toISOString().slice(0,10)+'T23:59:59',
-    fromDate: from,
-    toDate:   to
+    from:     fmtDate(from)+'T00:00:00',
+    to:       fmtDate(to)+'T23:59:59',
+    fromDate: new Date(fmtDate(from)+'T00:00:00'),
+    toDate:   new Date(fmtDate(to)+'T23:59:59'),
   };
 }
 
@@ -1274,7 +1259,7 @@ function renderWoo(wooData){
 // ══════════════════════════════════════════════════════
 async function refresh(){
   // loaders on
-  ['lChart','lKommo','lCompras','lWoo','lPedidos'].forEach(id=>document.getElementById(id).classList.add('on'));
+  ['lChart','lCompras','lWoo','lPedidos'].forEach(id=>document.getElementById(id).classList.add('on'));
   setTag('tLastUpd','Actualizando…');
 
   // ── 1. GOOGLE SHEETS ──
@@ -1288,31 +1273,7 @@ async function refresh(){
       : 'Datos estáticos (sheet sin permisos públicos o error de fetch)');
   document.getElementById('lCompras').classList.remove('on');
 
-  // ── 2. KOMMO ──
-  let kommoData = await fetchKommo();
-  const kommoOk = !!kommoData;
-  dbg('Kommo Pipeline', kommoOk?'ok':'err',
-    kommoOk
-      ? `✓ Live · ${kommoData.total} leads · ${kommoData.stages.length} etapas`
-      : '✗ Sin datos reales — usando DEMO · Verificar n8n workflow activo y credencial');
-  if(!kommoData) kommoData = demoKommo();
-  
-  buildKommoDonut(kommoData.stages);
-  document.getElementById('kLeads').textContent  = fnum(kommoData.total);
-  document.getElementById('kLeadsFoot').textContent = kommoOk?'leads activos':'leads (demo)';
-
-  const firstStage = kommoData.stages[0];
-  document.getElementById('kNuevos').textContent = firstStage?fnum(firstStage.count):'--';
-  document.getElementById('kNuevosFoot').textContent = firstStage?.name||'primer etapa';
-
-  const ganado = kommoData.stages.find(s=>s.name.toLowerCase().includes('ganad')||s.name.toLowerCase().includes('won'));
-  document.getElementById('kGanados').textContent = ganado?fnum(ganado.count):'--';
-  document.getElementById('kGanadosFoot').textContent = ganado?'cerrados ganados':'(buscar etapa)';
-
-  setTag('tKommo', kommoOk?'Kommo ✓':'Kommo (demo)', kommoOk?'ok':'');
-  document.getElementById('lKommo').classList.remove('on');
-
-  // ── 3. WOOCOMMERCE — órdenes reales con rango de fechas ──
+  // ── 2. WOOCOMMERCE — órdenes reales con rango de fechas ──
   const wcRaw = await fetchWC();
   const wcOk  = !!wcRaw;
 
@@ -1395,7 +1356,7 @@ const wkago = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
 document.getElementById('dfrom').value=wkago;
 document.getElementById('dto').value=today;
 
-dbg('Boot', 'info', `Iniciando · Proxy: ${N8N_PROXY} · Sheet: ${cfg.sheet_id||'no configurado'} · Kommo: ${cfg.kommo_domain||'no configurado'}`);
+dbg('Boot', 'info', `Iniciando · Proxy: ${N8N_PROXY} · Sheet: ${cfg.sheet_id||'no configurado'} · Timezone: America/Mexico_City`);
 refresh();
 setInterval(refresh, 5*60*1000); // auto-refresh 5min
 </script>
