@@ -560,17 +560,29 @@ function getRange(){
   };
 }
 
-// Parse dd/mm/yyyy or dd/mm/yy or similar formats → Date
+// Parse dd/mm/yyyy, dd/mm/yy, or gviz Date(YYYY,M,D) format → Date
 function parseSheetDate(str){
   if(!str) return null;
+  // gviz format: Date(2026,5,6) — month is 0-indexed
+  const gviz = typeof str === 'string' && str.match(/^Date\((\d+),(\d+),(\d+)\)$/);
+  if(gviz){
+    return new Date(parseInt(gviz[1]), parseInt(gviz[2]), parseInt(gviz[3]));
+  }
   // try dd/mm/yyyy
-  const m = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  const m = typeof str === 'string' && str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
   if(m){
     const day=parseInt(m[1]), mon=parseInt(m[2])-1, yr=parseInt(m[3]);
     return new Date(yr < 100 ? 2000+yr : yr, mon, day);
   }
   // fallback
   return new Date(str);
+}
+// Format a raw sheet fecha value (any supported format) → "dd/mm/yyyy" string
+function formatSheetDate(val){
+  if(!val) return '';
+  const d = parseSheetDate(val);
+  if(!d || isNaN(d)) return String(val);
+  return d.toLocaleDateString('es-AR', {day:'2-digit', month:'2-digit', year:'numeric'});
 }
 
 // Filter sheet rows by active range
@@ -705,7 +717,7 @@ async function fetchSheet(){
         nro_pedido:      r.c[1]?.v||'',
         proveedor:       r.c[2]?.v||'',
         detalle:         r.c[3]?.v||'',
-        fecha:           r.c[4]?.v||'',
+        fecha:           formatSheetDate(r.c[4]?.v)||'',
         cantidad:        parseFloat(r.c[5]?.v)||null,
         precio_unitario: parseFloat(r.c[6]?.v)||null,
         subtotal:        parseFloat(r.c[7]?.v)||null,
@@ -728,13 +740,30 @@ async function fetchSheet(){
         chat_id:  r.c[0]?.v||'',
         usuario:  r.c[2]?.v||'',
         proveedor:r.c[3]?.v||'',
-        fecha:    r.c[4]?.v||'',
+        fecha:    formatSheetDate(r.c[4]?.v)||'',
         total:    parseFloat(r.c[9]?.v)||0,
         items,
       });
     });
 
-    return { facturas, estados, source:'live' };
+    // Si los estados del tab no tienen proveedor, los derivamos desde facturas
+    // (agrupando por proveedor+fecha, usando la fila TOTAL como monto)
+    const estadosValidos = estados.filter(e => e.proveedor);
+    const estadosFinales = estadosValidos.length > 0 ? estadosValidos : (() => {
+      const grupos = {};
+      facturas.forEach(f => {
+        const key = (f.proveedor||'') + '|' + (f.fecha||'');
+        if(!grupos[key]) grupos[key] = { proveedor: f.proveedor, fecha: f.fecha, usuario: f.usuario, total: 0, items: [] };
+        if(f.detalle === 'TOTAL' && f.total) {
+          grupos[key].total = f.total;
+        } else if(f.detalle && f.detalle !== 'TOTAL') {
+          grupos[key].items.push({ detalle: f.detalle, cantidad: f.cantidad, subtotal: f.subtotal });
+        }
+      });
+      return Object.values(grupos).map(g => ({ ...g, chat_id:'', total: g.total || g.items.reduce((a,i)=>a+(i.subtotal||0),0) }));
+    })();
+
+    return { facturas, estados: estadosFinales, source:'live' };
   }catch(e){
     console.warn('Sheet fetch error:', e);
     return { facturas: SHEET_FACTURAS_STATIC, estados: SHEET_ESTADOS_STATIC, source:'static' };
