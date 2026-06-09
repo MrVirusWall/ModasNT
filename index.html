@@ -248,6 +248,10 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
   <div class="kpi" style="--ac:var(--gn)">
     <div class="kpi-lbl">Ventas Totales</div>
     <div class="kpi-val" id="kVentas"><sup>$</sup>--</div>
+    <div style="display:flex;align-items:baseline;gap:6px;margin:4px 0 2px">
+      <span style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--txd)">Cobrado</span>
+      <span id="kVentasCobrado" style="font-size:18px;font-weight:700;color:var(--cy);font-family:'Orbitron',monospace">--</span>
+    </div>
     <div class="kpi-foot" id="kVentasFoot">todas las sucursales · período</div>
   </div>
   <div class="kpi" style="--ac:var(--cy)">
@@ -1299,6 +1303,7 @@ async function refresh(){
     // KPIs
     document.getElementById('kVentas').innerHTML =
       `<sup>$</sup>${fmxn(wcRaw.totalVentas).replace('$','')}`;
+    document.getElementById('kVentasCobrado').textContent = fmxn(wcRaw.totalCobranzas);
     document.getElementById('kVentasFoot').textContent =
       `${wcRaw.totalPedidos} pedidos · ${rangoLabel}`;
 
