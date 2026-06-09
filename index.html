@@ -690,8 +690,9 @@ function showComprasTab(tab, btn){
 async function fetchSheet(){
   if(!cfg.sheet_id) return { facturas: SHEET_FACTURAS_STATIC, estados: SHEET_ESTADOS_STATIC, source:'static' };
   try{
-    // Fetch tab Facturas
-    const urlF = `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}/gviz/tq?tqx=out:json&sheet=Facturas`;
+    // Fetch tab Facturas — timestamp para evitar cache de Google
+    const _ts = Date.now();
+    const urlF = `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}/gviz/tq?tqx=out:json&sheet=Facturas&t=${_ts}`;
     const resF = await fetch(urlF, {cache:'no-cache'});
     const txtF = await resF.text();
     const jsonF = JSON.parse(txtF.match(/setResponse\(([\s\S]*)\)/)[1]);
@@ -712,8 +713,8 @@ async function fetchSheet(){
       });
     });
 
-    // Fetch tab estados
-    const urlE = `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}/gviz/tq?tqx=out:json&sheet=estados`;
+    // Fetch tab estados — mismo timestamp para consistencia
+    const urlE = `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}/gviz/tq?tqx=out:json&sheet=estados&t=${_ts}`;
     const resE = await fetch(urlE, {cache:'no-cache'});
     const txtE = await resE.text();
     const jsonE = JSON.parse(txtE.match(/setResponse\(([\s\S]*)\)/)[1]);
