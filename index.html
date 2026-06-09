@@ -291,6 +291,25 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
     </div>
   </div>
 
+  <!-- MARGEN · COSTO DIARIO -->
+  <div class="panel" id="panelMargen">
+    <div class="ldr" id="lMargen"><div class="ring"></div></div>
+    <div class="ph">
+      <div class="ptitle" style="--ac:#a78bfa"><div class="pdot" style="background:#a78bfa;box-shadow:0 0 8px #a78bfa"></div>Margen · Costo Diario por Sucursal</div>
+      <div class="stabs" id="margenTabs"></div>
+    </div>
+    <div class="pb">
+      <div class="errmsg" id="errMargen"></div>
+      <div style="display:flex;gap:16px;margin-bottom:8px;flex-wrap:wrap" id="margenLegend">
+        <span style="font-size:10px;color:#00ff88">── Ventas</span>
+        <span style="font-size:10px;color:#a78bfa">── Margen bruto</span>
+        <span style="font-size:10px;color:#ff4466">╌╌ Costo fijo diario</span>
+      </div>
+      <div class="cw" style="height:220px"><canvas id="margenChart"></canvas></div>
+      <div id="margenResumen" style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;font-size:11px"></div>
+    </div>
+  </div>
+
   <!-- PEDIDOS POR SUCURSAL (esqueleto — pendiente endpoint pos-orders) -->
   <div class="panel">
     <div class="ldr" id="lPedidos"><div class="ring"></div></div>
@@ -600,6 +619,38 @@ const SUCS = [
 ];
 let visSucs = new Set(SUCS.map(s=>s.id));
 let _lastSalesData = null;
+
+// Costo fijo diario por sucursal (MXN). Se puede ajustar por tienda después.
+const DAILY_STORE_COST = { 1:700, 2:700, 3:700, 5:700, 6:700, 7:700 };
+
+// Cache de costos de productos: { product_id: costo }
+let _productCostCache = null;
+
+async function fetchProductCosts(){
+  if(_productCostCache) return _productCostCache;
+  const cache = {};
+  try{
+    let page=1, more=true;
+    while(more && page<=10){
+      const d = await wcProxy('products', { per_page:100, page, status:'publish' });
+      const items = d.result||[];
+      items.forEach(p=>{
+        const meta = {};
+        (p.meta_data||[]).forEach(m=>{ meta[m.key]=m.value; });
+        const cost = parseFloat(meta['_pos_cost']||0);
+        if(cost>0) cache[p.id] = cost;
+      });
+      more = items.length===100;
+      page++;
+    }
+    _productCostCache = cache;
+    dbg('ProductCosts', 'ok', `${Object.keys(cache).length} productos con costo cargados`);
+  }catch(e){
+    dbg('ProductCosts', 'warn', `No se pudo cargar costos: ${e.message}`);
+    _productCostCache = {};
+  }
+  return _productCostCache;
+}
 
 function buildSucUI(){
   const tabsEl = document.getElementById('sucTabs');
@@ -923,6 +974,11 @@ function parseWCOrder(o){
   const hasCash     = payMethods.some(p=>p.method==='cash');
   const hasCard     = payMethods.some(p=>['card','tarjeta','terminal'].includes(p.method));
   const hasTransfer = payMethods.some(p=>['transfer','transferencia','transfer_bbva'].includes(p.method));
+  const lineItems = (o.line_items||[]).map(li=>({
+    product_id: li.product_id,
+    quantity:   parseFloat(li.quantity)||1,
+    total:      parseFloat(li.total)||0,
+  }));
   return {
     id:           o.id,
     status:       o.status,
@@ -933,6 +989,7 @@ function parseWCOrder(o){
     cashierId:    meta['_pos_cashier_id']||null,
     isPOS:        !!meta['_created_via_pos'],
     hasCash, hasCard, hasTransfer,
+    lineItems,
   };
 }
 
@@ -1115,6 +1172,160 @@ function buildSalesChart(storesData){
     stores.map(s=>({...s, value:s.cobranzas})), 'value', 'Cobranzas');
 }
 
+// ── MARGEN / COSTO DIARIO ─────────────────────────────
+let margenCI = null;
+let _margenActiveStore = 'all'; // 'all' o store id (number)
+
+function buildMargenTabs(){
+  const tabs = document.getElementById('margenTabs');
+  const all = [{ id:'all', name:'Todos', clr:'#a78bfa' }, ...SUCS];
+  tabs.innerHTML = all.map(s=>`
+    <button class="stab${s.id===_margenActiveStore?' on':''}"
+      style="${s.id===_margenActiveStore?`--ac:${s.clr||'#a78bfa'};border-color:${s.clr||'#a78bfa'}`:''}"
+      onclick="setMargenStore(${typeof s.id==='number'?s.id:`'all'`},this)">${s.name}</button>
+  `).join('');
+}
+
+function setMargenStore(id, btn){
+  _margenActiveStore = id;
+  document.querySelectorAll('#margenTabs .stab').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  if(window._lastMargenData) renderMargenChart(window._lastMargenData);
+}
+
+function buildDailyMargen(ventaOrders, costMap, storeFilter){
+  const { from, to } = getRange();
+  // Generar todos los días del rango
+  const days = [];
+  const cur = new Date(from.slice(0,10)+'T12:00:00');
+  const end = new Date(to.slice(0,10)+'T12:00:00');
+  while(cur <= end){ days.push(cur.toISOString().slice(0,10)); cur.setDate(cur.getDate()+1); }
+
+  const storeIds = storeFilter==='all' ? SUCS.map(s=>s.id) : [storeFilter];
+
+  return days.map(day=>{
+    const orders = ventaOrders.filter(o=>
+      o.dateCreated===day &&
+      (storeFilter==='all' ? true : o.storeId===storeFilter)
+    );
+    const ventas = orders.reduce((a,o)=>a+o.total, 0);
+
+    // COGS: por cada line_item, buscar costo en cache
+    let cogs = 0;
+    orders.forEach(o=>{
+      (o.lineItems||[]).forEach(li=>{
+        const cost = costMap[li.product_id]||0;
+        cogs += cost * li.quantity;
+      });
+    });
+
+    // Costo fijo del día: suma de tiendas activas en ese día
+    // Si hay órdenes ese día en esas tiendas, contamos el costo
+    const activeSIds = storeFilter==='all'
+      ? [...new Set(orders.map(o=>o.storeId).filter(Boolean))]
+      : (orders.length ? [storeFilter] : []);
+    const costoFijo = activeSIds.reduce((a,sid)=>a+(DAILY_STORE_COST[sid]||700), 0)
+      || storeIds.reduce((a,sid)=>a+(DAILY_STORE_COST[sid]||700), 0); // siempre mostrar línea
+
+    const margen = ventas - cogs;
+    return { day, ventas, cogs, margen, costoFijo };
+  });
+}
+
+function renderMargenChart(data){
+  const ctx = document.getElementById('margenChart').getContext('2d');
+  if(margenCI) margenCI.destroy();
+
+  const labels = data.map(d=>{
+    const [y,m,dd] = d.day.split('-');
+    return `${dd}/${m}`;
+  });
+  const hasCogs = data.some(d=>d.cogs>0);
+
+  const datasets = [
+    {
+      label:'Ventas',
+      data: data.map(d=>d.ventas),
+      borderColor:'#00ff88', backgroundColor:'rgba(0,255,136,.08)',
+      borderWidth:2, pointRadius:3, tension:.3, fill:true,
+    },
+  ];
+  if(hasCogs){
+    datasets.push({
+      label:'Margen bruto',
+      data: data.map(d=>d.margen),
+      borderColor:'#a78bfa', backgroundColor:'rgba(167,139,250,.06)',
+      borderWidth:2, pointRadius:3, tension:.3, fill:true,
+    });
+  }
+  datasets.push({
+    label:'Costo fijo',
+    data: data.map(d=>d.costoFijo),
+    borderColor:'#ff4466', backgroundColor:'transparent',
+    borderWidth:1.5, borderDash:[5,4], pointRadius:0, tension:0,
+  });
+
+  margenCI = new Chart(ctx,{
+    type:'line',
+    data:{ labels, datasets },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ display:false },
+        tooltip:{
+          backgroundColor:'#0f1016', borderColor:'#2a2d3e', borderWidth:1,
+          callbacks:{
+            label(c){ return `  ${c.dataset.label}: ${fmxn(c.parsed.y)}`; }
+          }
+        }
+      },
+      scales:{
+        x:{ grid:{display:false}, ticks:{font:{size:10}} },
+        y:{
+          grid:{color:'rgba(28,30,42,.8)'},
+          ticks:{callback:v=>v>=1000?`$${(v/1000).toFixed(0)}k`:`$${v}`}
+        }
+      }
+    }
+  });
+
+  // Resumen numérico debajo del gráfico
+  const totalVentas = data.reduce((a,d)=>a+d.ventas,0);
+  const totalMargen = data.reduce((a,d)=>a+d.margen,0);
+  const totalCosto  = data.reduce((a,d)=>a+d.costoFijo,0);
+  const totalCogs   = data.reduce((a,d)=>a+d.cogs,0);
+  const pctMargen   = totalVentas>0 ? Math.round(totalMargen/totalVentas*100) : 0;
+  const resultado   = totalMargen - totalCosto;
+
+  document.getElementById('margenResumen').innerHTML = `
+    <div style="background:rgba(0,255,136,.07);border:1px solid rgba(0,255,136,.2);border-radius:6px;padding:8px 14px">
+      <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.06em">Ventas</div>
+      <div style="color:#00ff88;font-weight:700">${fmxn(totalVentas)}</div>
+    </div>
+    ${hasCogs?`<div style="background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.2);border-radius:6px;padding:8px 14px">
+      <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.06em">Margen bruto</div>
+      <div style="color:#a78bfa;font-weight:700">${fmxn(totalMargen)} <span style="font-size:10px;opacity:.7">(${pctMargen}%)</span></div>
+    </div>`:''}
+    <div style="background:rgba(255,68,102,.07);border:1px solid rgba(255,68,102,.2);border-radius:6px;padding:8px 14px">
+      <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.06em">Costo fijo</div>
+      <div style="color:#ff4466;font-weight:700">${fmxn(totalCosto)}</div>
+    </div>
+    ${hasCogs?`<div style="background:rgba(255,204,0,.07);border:1px solid rgba(255,204,0,.2);border-radius:6px;padding:8px 14px">
+      <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.06em">Resultado neto</div>
+      <div style="color:${resultado>=0?'#ffcc00':'#ff4466'};font-weight:700">${fmxn(resultado)}</div>
+    </div>`:''}
+    ${!hasCogs?`<div style="color:var(--txd);font-size:10px;align-self:center">⚠ Costos de producto no disponibles — el margen se calculará cuando se carguen los costos</div>`:''}
+  `;
+}
+
+function buildMargenUI(ventaOrders, costMap){
+  window._lastMargenData = buildDailyMargen(ventaOrders, costMap, _margenActiveStore);
+  buildMargenTabs();
+  renderMargenChart(window._lastMargenData);
+  document.getElementById('lMargen').classList.remove('on');
+}
+
 function buildWooBar(labels, data){
   const ctx=document.getElementById('wooBar').getContext('2d');
   if(wooCI) wooCI.destroy();
@@ -1265,7 +1476,7 @@ function renderWoo(wooData){
 // ══════════════════════════════════════════════════════
 async function refresh(){
   // loaders on
-  ['lChart','lCompras','lWoo','lPedidos'].forEach(id=>document.getElementById(id).classList.add('on'));
+  ['lChart','lCompras','lWoo','lPedidos','lMargen'].forEach(id=>document.getElementById(id).classList.add('on'));
   setTag('tLastUpd','Actualizando…');
 
   // ── 1. GOOGLE SHEETS ──
@@ -1279,11 +1490,12 @@ async function refresh(){
       : 'Datos estáticos (sheet sin permisos públicos o error de fetch)');
   document.getElementById('lCompras').classList.remove('on');
 
-  // ── 2. WOOCOMMERCE — órdenes reales con rango de fechas ──
-  const wcRaw = await fetchWC();
-  const wcOk  = !!wcRaw;
+  // ── 2. WOOCOMMERCE + costos de producto (en paralelo) ──
+  document.getElementById('lMargen').classList.add('on');
+  const [wcRaw, costMap] = await Promise.all([ fetchWC(), fetchProductCosts() ]);
+  const wcOk = !!wcRaw;
 
-  // ── 4. WORDPRESS POS — solo stock e inventario ──
+  // ── 3. WORDPRESS POS — solo stock e inventario ──
   const wooRaw = await fetchWoo();
   const wooOk  = !!wooRaw;
 
@@ -1297,6 +1509,9 @@ async function refresh(){
 
     // Gráfico de pedidos por sucursal
     buildPedidosChart(wcRaw.byStore.map(s=>({id:s.id, count:s.pedidos})));
+
+    // Gráfico de margen y costo diario
+    buildMargenUI(wcRaw.ventaOrders, costMap);
 
     setTag('wooTag','WooCommerce ✓','ok');
 
