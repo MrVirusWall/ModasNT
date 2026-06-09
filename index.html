@@ -588,10 +588,13 @@ function formatSheetDate(val){
 // Filter sheet rows by active range
 function filterSheetByRange(rows){
   const {fromDate, toDate} = getRange();
+  // Normalize to day boundaries so time-of-day doesn't affect comparison
+  const from0 = new Date(fromDate); from0.setHours(0,0,0,0);
+  const to23  = new Date(toDate);   to23.setHours(23,59,59,999);
   return rows.filter(r=>{
     const d = parseSheetDate(r.fecha);
     if(!d || isNaN(d)) return true; // keep if unparseable
-    return d >= fromDate && d <= toDate;
+    return d >= from0 && d <= to23;
   });
 }
 
