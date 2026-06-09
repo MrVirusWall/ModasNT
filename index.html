@@ -971,8 +971,10 @@ async function fetchWC(){
     const cobradoInm      = ventaOrders.filter(o=>o.hasCash||o.hasCard).reduce((a,o)=>a+o.total,0);
     const pendienteCharly = ventaOrders.filter(o=>o.hasTransfer&&o.status==='processing').reduce((a,o)=>a+o.total,0);
 
-    // ── Totales de COBRANZAS (por date_completed en el período) ──
-    const totalCobranzas  = cobranzaOrders.reduce((a,o)=>a+o.total, 0);
+    // ── Totales de COBRANZAS ──
+    // = efectivo/tarjeta cobrado al instante + lo que Charly pasó a completado en el período
+    const cobCharly       = cobranzaOrders.reduce((a,o)=>a+o.total, 0);
+    const totalCobranzas  = cobradoInm + cobCharly;
 
     // ── Por sucursal (ventas) ──
     const byStoreMap = {};
@@ -998,7 +1000,7 @@ async function fetchWC(){
     return {
       ventaOrders, cobranzaOrders,
       totalVentas, totalCobranzas,
-      cobradoInm, pendienteCharly,
+      cobradoInm, cobCharly, pendienteCharly,
       totalPedidos:    ventaOrders.length,
       totalConciliados:cobranzaOrders.length,
       byStore,
@@ -1303,7 +1305,7 @@ async function refresh(){
     document.getElementById('kCobranzas').innerHTML =
       `<sup>$</sup>${fmxn(wcRaw.totalCobranzas).replace('$','')}`;
     document.getElementById('kCobranzasFoot').textContent =
-      `${wcRaw.totalConciliados} conciliados · efectivo/tarjeta $${fmxn(wcRaw.cobradoInm).replace('$','')} · pend. Charly $${fmxn(wcRaw.pendienteCharly).replace('$','')}`;
+      `ef/tarjeta ${fmxn(wcRaw.cobradoInm)} · Charly ${fmxn(wcRaw.cobCharly)} · pend. ${fmxn(wcRaw.pendienteCharly)}`;
 
     document.getElementById('kPedidos').textContent = fnum(wcRaw.totalPedidos);
     document.getElementById('kPedidosFoot').textContent =
