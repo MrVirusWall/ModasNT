@@ -852,22 +852,25 @@ async function fetchSheet(){
       });
     });
 
-    // Si los estados del tab no tienen proveedor, los derivamos desde facturas
-    // (agrupando por proveedor+fecha, usando la fila TOTAL como monto)
-    const estadosValidos = estados.filter(e => e.proveedor);
-    const estadosFinales = estadosValidos.length > 0 ? estadosValidos : (() => {
-      const grupos = {};
-      facturas.forEach(f => {
-        const key = (f.proveedor||'') + '|' + (f.fecha||'');
-        if(!grupos[key]) grupos[key] = { proveedor: f.proveedor, fecha: f.fecha, usuario: f.usuario, total: 0, items: [] };
-        if(f.detalle === 'TOTAL' && f.total) {
-          grupos[key].total = f.total;
-        } else if(f.detalle && f.detalle !== 'TOTAL') {
-          grupos[key].items.push({ detalle: f.detalle, cantidad: f.cantidad, subtotal: f.subtotal });
-        }
-      });
-      return Object.values(grupos).map(g => ({ ...g, chat_id:'', total: g.total || g.items.reduce((a,i)=>a+(i.subtotal||0),0) }));
-    })();
+    // El Resumen (estados) se deriva SIEMPRE desde Facturas, que tiene
+    // proveedor confiable en columna C para todas las filas. El tab `estados`
+    // suele tener proveedor vacío en la mayoría de las filas (solo lo completa
+    // el bot para algunas compras), lo que rompía el filtro por fecha porque
+    // dejaba afuera facturas reales con proveedor/fecha válidos.
+    // Agrupamos por proveedor+fecha+nro_pedido, usando la fila TOTAL como monto.
+    const grupos = {};
+    facturas.forEach(f => {
+      const key = (f.proveedor||'') + '|' + (f.fecha||'') + '|' + (f.nro_pedido||'');
+      if(!grupos[key]) grupos[key] = { proveedor: f.proveedor, fecha: f.fecha, usuario: f.usuario, total: 0, items: [], chat_id:'' };
+      if(f.detalle === 'TOTAL' && f.total) {
+        grupos[key].total = f.total;
+      } else if(f.detalle && f.detalle !== 'TOTAL') {
+        grupos[key].items.push({ detalle: f.detalle, cantidad: f.cantidad, subtotal: f.subtotal });
+      }
+    });
+    const estadosFinales = Object.values(grupos)
+      .filter(g => g.proveedor) // descartar filas vacías/basura sin proveedor
+      .map(g => ({ ...g, total: g.total || g.items.reduce((a,i)=>a+(i.subtotal||0),0) }));
 
     return { facturas, estados: estadosFinales, source:'live' };
   }catch(e){
