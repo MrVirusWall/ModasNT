@@ -384,6 +384,59 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
   </div>
 
 </div>
+
+<!-- BOTTOM GRID 2: LIVE VS NORMAL + VENTAS POR USUARIO -->
+<div class="grid2b" style="margin-top:20px">
+
+  <!-- LIVE VS NORMAL -->
+  <div class="panel">
+    <div class="ldr" id="lLive"><div class="ring"></div></div>
+    <div class="ph">
+      <div class="ptitle" style="--ac:#ff0066"><div class="pdot" style="background:#ff0066;box-shadow:0 0 8px #ff0066"></div>Ventas Live vs Normal</div>
+      <div class="pmeta"><div class="tag" id="liveTag">--</div></div>
+    </div>
+    <div class="pb">
+      <div class="errmsg" id="errLive"></div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px">
+        <div style="background:rgba(255,0,102,.07);border:1px solid rgba(255,0,102,.2);border-radius:6px;padding:10px 16px;flex:1;min-width:140px">
+          <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.06em">Ventas Live</div>
+          <div id="kLiveTotal" style="color:#ff0066;font-weight:700;font-size:20px;font-family:'Orbitron',monospace">--</div>
+          <div id="kLiveFoot" style="color:var(--txd);font-size:10px;margin-top:2px">--</div>
+        </div>
+        <div style="background:rgba(0,255,136,.07);border:1px solid rgba(0,255,136,.2);border-radius:6px;padding:10px 16px;flex:1;min-width:140px">
+          <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.06em">Ventas Normales</div>
+          <div id="kNormalTotal" style="color:#00ff88;font-weight:700;font-size:20px;font-family:'Orbitron',monospace">--</div>
+          <div id="kNormalFoot" style="color:var(--txd);font-size:10px;margin-top:2px">--</div>
+        </div>
+      </div>
+      <div class="slbl">Por anfitrión (Live)</div>
+      <div style="overflow-x:auto;max-height:200px;overflow-y:auto">
+        <table class="tbl">
+          <thead><tr><th>Anfitrión</th><th>Sesiones / Ventas</th><th>Total</th></tr></thead>
+          <tbody id="bodyLiveHosts"><tr><td colspan="3"><div class="empty">Cargando…</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- VENTAS POR USUARIO Y SUCURSAL -->
+  <div class="panel">
+    <div class="ldr" id="lUsuarios"><div class="ring"></div></div>
+    <div class="ph">
+      <div class="ptitle" style="--ac:#00ccff"><div class="pdot" style="background:#00ccff;box-shadow:0 0 8px #00ccff"></div>Ventas por Usuario y Sucursal</div>
+    </div>
+    <div class="pb" style="padding:0">
+      <div class="errmsg" id="errUsuarios" style="margin:12px 16px"></div>
+      <div style="overflow-x:auto;max-height:320px;overflow-y:auto">
+        <table class="tbl">
+          <thead><tr><th>Usuario</th><th>Sucursal</th><th>Cant. Ventas</th><th>Monto Total</th></tr></thead>
+          <tbody id="bodyUsuarios"><tr><td colspan="4"><div class="empty">Cargando…</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
 </div><!-- /shell -->
 
 <script>
@@ -619,6 +672,16 @@ const SUCS = [
 ];
 let visSucs = new Set(SUCS.map(s=>s.id));
 let _lastSalesData = null;
+
+// Mapa de cashier_id (_pos_cashier_id de WooCommerce) → nombre legible.
+// Completar a medida que se identifiquen los IDs de cada vendedor/a.
+const CASHIERS = {
+  // 2178: 'Nombre Apellido',
+  // 1235: 'Nombre Apellido',
+};
+function cashierName(id){
+  return CASHIERS[id] || `Usuario #${id}`;
+}
 
 // Costo fijo diario por sucursal (MXN). Se puede ajustar por tienda después.
 const DAILY_STORE_COST = { 1:700, 2:700, 3:700, 5:700, 6:700, 7:700 };
@@ -948,6 +1011,41 @@ async function fetchWoo(){
     return { stores, refunds, stockTotal, lowStock, source:'live' };
   }catch(e){
     console.warn('WordPress POS error:', e);
+    return null;
+  }
+}
+
+// ── LIVE SESSIONS (pos-paquetes-pro) ──────────────────
+// Devuelve { sessions, byHost } con sesiones cuyo opened_at cae en el rango activo
+async function fetchLiveSessions(){
+  try{
+    const d = await wpProxy('live-sessions', {});
+    const all = d.sessions || d.result || [];
+    const { fromDate, toDate } = getRange();
+    const from0 = new Date(fromDate); from0.setHours(0,0,0,0);
+    const to23  = new Date(toDate);   to23.setHours(23,59,59,999);
+    const sessions = all.filter(s=>{
+      if(!s.opened_at) return false;
+      const d2 = new Date(s.opened_at.replace(' ','T'));
+      return d2>=from0 && d2<=to23;
+    });
+
+    // Agrupar por host
+    const byHostMap = {};
+    sessions.forEach(s=>{
+      const hid = s.host_id;
+      if(!byHostMap[hid]) byHostMap[hid] = { host_id:hid, host_name:s.host_name, sales_count:0, sales_total:0 };
+      byHostMap[hid].sales_count += s.sales_count||0;
+      byHostMap[hid].sales_total += s.sales_total||0;
+    });
+
+    const totalLive = sessions.reduce((a,s)=>a+(s.sales_total||0), 0);
+    const totalLiveCount = sessions.reduce((a,s)=>a+(s.sales_count||0), 0);
+    const openCount = sessions.filter(s=>s.status==='open').length;
+
+    return { sessions, byHost: Object.values(byHostMap), totalLive, totalLiveCount, openCount, source:'live' };
+  }catch(e){
+    console.warn('Live sessions fetch error:', e);
     return null;
   }
 }
@@ -1471,12 +1569,82 @@ function renderWoo(wooData){
     `${ok.length}/${stores.length} tiendas · ${refundsCount} devoluciones recientes · stock ${fnum(wooData?.stockTotal||0)} (${wooData?.lowStock||0} bajo)`;
 }
 
+// ── LIVE VS NORMAL ─────────────────────────────────────
+function renderLiveData(liveData, totalVentas){
+  const total = liveData?.totalLive||0;
+  const count = liveData?.totalLiveCount||0;
+  const open  = liveData?.openCount||0;
+  const normal = Math.max(totalVentas - total, 0);
+
+  document.getElementById('kLiveTotal').textContent = fmxn(total);
+  document.getElementById('kLiveFoot').textContent =
+    `${count} ventas · ${(liveData?.sessions||[]).length} sesiones${open?` · ${open} abierta${open!==1?'s':''}`:''}`;
+
+  document.getElementById('kNormalTotal').textContent = fmxn(normal);
+  const pctNormal = totalVentas>0 ? Math.round(normal/totalVentas*100) : 0;
+  const pctLive   = totalVentas>0 ? Math.round(total/totalVentas*100) : 0;
+  document.getElementById('kNormalFoot').textContent =
+    totalVentas>0 ? `${pctNormal}% del total · Live ${pctLive}%` : '—';
+
+  const byHost = liveData?.byHost||[];
+  const tbody = document.getElementById('bodyLiveHosts');
+  if(!byHost.length){
+    tbody.innerHTML = `<tr><td colspan="3"><div class="empty">Sin sesiones Live en este período</div></td></tr>`;
+  }else{
+    tbody.innerHTML = byHost
+      .sort((a,b)=>b.sales_total-a.sales_total)
+      .map(h=>{
+        const sessCount = (liveData.sessions||[]).filter(s=>s.host_id===h.host_id).length;
+        return `<tr>
+          <td style="font-size:11px"><strong>${h.host_name}</strong></td>
+          <td class="mo" style="color:var(--txd);font-size:11px">${sessCount} ses. / ${h.sales_count} ventas</td>
+          <td class="amt">${fmxn(h.sales_total)}</td>
+        </tr>`;
+      }).join('');
+  }
+
+  setTag('liveTag', liveData?.source==='live'?'Live API ✓':'Live API (sin datos)', liveData?.source==='live'?'ok':'');
+  document.getElementById('lLive').classList.remove('on');
+}
+
+// ── VENTAS POR USUARIO Y SUCURSAL ─────────────────────
+function renderUsuarios(ventaOrders){
+  const groups = {};
+  (ventaOrders||[]).forEach(o=>{
+    if(!o.cashierId) return;
+    const key = `${o.cashierId}|${o.storeId}`;
+    if(!groups[key]) groups[key] = { cashierId:o.cashierId, storeId:o.storeId, count:0, total:0 };
+    groups[key].count += 1;
+    groups[key].total += o.total;
+  });
+
+  const rows = Object.values(groups).sort((a,b)=>b.total-a.total);
+  const tbody = document.getElementById('bodyUsuarios');
+  if(!rows.length){
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty">Sin ventas con usuario asignado en este período</div></td></tr>`;
+  }else{
+    tbody.innerHTML = rows.map(r=>{
+      const suc = SUCS.find(s=>s.id===r.storeId);
+      return `<tr>
+        <td style="font-size:11px"><strong>${cashierName(r.cashierId)}</strong></td>
+        <td style="font-size:11px;color:var(--txd)">
+          <span class="dlsw" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${suc?.clr||'#7a7f96'};margin-right:6px"></span>
+          ${suc?.name || `Tienda ${r.storeId||'—'}`}
+        </td>
+        <td class="mo" style="text-align:right">${fnum(r.count)}</td>
+        <td class="amt">${fmxn(r.total)}</td>
+      </tr>`;
+    }).join('');
+  }
+  document.getElementById('lUsuarios').classList.remove('on');
+}
+
 // ══════════════════════════════════════════════════════
 //  MAIN REFRESH
 // ══════════════════════════════════════════════════════
 async function refresh(){
   // loaders on
-  ['lChart','lCompras','lWoo','lPedidos','lMargen'].forEach(id=>document.getElementById(id).classList.add('on'));
+  ['lChart','lCompras','lWoo','lPedidos','lMargen','lLive','lUsuarios'].forEach(id=>document.getElementById(id).classList.add('on'));
   setTag('tLastUpd','Actualizando…');
 
   // ── 1. GOOGLE SHEETS ──
@@ -1490,9 +1658,9 @@ async function refresh(){
       : 'Datos estáticos (sheet sin permisos públicos o error de fetch)');
   document.getElementById('lCompras').classList.remove('on');
 
-  // ── 2. WOOCOMMERCE + costos de producto (en paralelo) ──
+  // ── 2. WOOCOMMERCE + costos de producto + live sessions (en paralelo) ──
   document.getElementById('lMargen').classList.add('on');
-  const [wcRaw, costMap] = await Promise.all([ fetchWC(), fetchProductCosts() ]);
+  const [wcRaw, costMap, liveData] = await Promise.all([ fetchWC(), fetchProductCosts(), fetchLiveSessions() ]);
   const wcOk = !!wcRaw;
 
   // ── 3. WORDPRESS POS — solo stock e inventario ──
@@ -1531,8 +1699,14 @@ async function refresh(){
     document.getElementById('kPedidosFoot').textContent =
       `${wcRaw.totalConciliados} conciliados · ${wcRaw.ventaOrders.filter(o=>o.hasTransfer&&o.status==='processing').length} pend. Charly`;
 
+    // Live vs Normal + ventas por usuario
+    renderLiveData(liveData, wcRaw.totalVentas);
+    renderUsuarios(wcRaw.ventaOrders);
+
   } else {
     document.getElementById('lChart').classList.remove('on');
+    document.getElementById('lLive').classList.remove('on');
+    document.getElementById('lUsuarios').classList.remove('on');
   }
 
   // Stock desde PDV Lat
