@@ -674,13 +674,39 @@ let visSucs = new Set(SUCS.map(s=>s.id));
 let _lastSalesData = null;
 
 // Mapa de cashier_id (_pos_cashier_id de WooCommerce) → nombre legible.
-// Completar a medida que se identifiquen los IDs de cada vendedor/a.
+// Se completa con IDs conocidos; los desconocidos se resuelven dinámicamente
+// contra wc/v3/customers/{id} (ver fetchCashierNames).
 const CASHIERS = {
-  // 2178: 'Nombre Apellido',
-  // 1235: 'Nombre Apellido',
+  1235: 'Alan',
+  2178: 'Christopher Estrada',
+  1234: 'Christopher',
+  2152: 'Azul',
+  2157: 'Zuleima',
+  2143: 'Karina',
+  2155: 'Veronica Vallejo',
+  2153: 'Isabel Citlalli',
 };
+let _cashierNameCache = {};
 function cashierName(id){
-  return CASHIERS[id] || `Usuario #${id}`;
+  return CASHIERS[id] || _cashierNameCache[id] || `Usuario #${id}`;
+}
+
+// Resuelve nombres de cajeros desconocidos contra WooCommerce (wc/v3/customers/{id})
+async function fetchCashierNames(ids){
+  const toFetch = [...new Set(ids)].filter(id => id && !CASHIERS[id] && !_cashierNameCache[id]);
+  if(!toFetch.length) return;
+  await Promise.all(toFetch.map(async id=>{
+    try{
+      const d = await wcProxy('customer', { id });
+      const fn = (d.first_name||'').trim();
+      const ln = (d.last_name||'').trim();
+      let name = (fn || ln) ? `${fn} ${ln}`.trim() : (d.username||'').replace(/[._]+/g,' ').trim();
+      name = name.split(' ').filter(Boolean).map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(' ');
+      _cashierNameCache[id] = name || `Usuario #${id}`;
+    }catch(e){
+      _cashierNameCache[id] = `Usuario #${id}`;
+    }
+  }));
 }
 
 // Costo fijo diario por sucursal (MXN). Se puede ajustar por tienda después.
@@ -1704,6 +1730,7 @@ async function refresh(){
 
     // Live vs Normal + ventas por usuario
     renderLiveData(liveData, wcRaw.totalVentas);
+    await fetchCashierNames(wcRaw.ventaOrders.map(o=>o.cashierId));
     renderUsuarios(wcRaw.ventaOrders);
 
   } else {
