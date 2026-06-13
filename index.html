@@ -601,7 +601,8 @@ function getRange(){
     from.setDate(now.getDate()-dow);
     to.setDate(from.getDate()+6);
   } else if(activeRange==='month'){
-    from.setDate(now.getDate()-30);
+    // del día 1 del mes actual a hoy (hora México)
+    from.setDate(1);
   } else{
     return {
       from: document.getElementById('dfrom').value+'T00:00:00',
@@ -1138,7 +1139,7 @@ async function fetchWCPaged(params, maxPages){
 async function fetchWC(){
   try{
     const { from, to } = getRange();
-    const maxPg = activeRange==='today' ? 1 : activeRange==='week' ? 3 : 5;
+    const maxPg = activeRange==='today' ? 1 : activeRange==='week' ? 3 : activeRange==='month' ? 20 : 10;
 
     // ── Llamada 1: VENTAS — órdenes creadas en el período (cualquier estado) ──
     const ventaOrders = await fetchWCPaged({ after:from, before:to }, maxPg);
