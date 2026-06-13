@@ -1320,7 +1320,10 @@ function setMargenStore(id, btn){
   _margenActiveStore = id;
   document.querySelectorAll('#margenTabs .stab').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
-  if(window._lastMargenData) renderMargenChart(window._lastMargenData);
+  if(window._lastVentaOrders){
+    window._lastMargenData = buildDailyMargen(window._lastVentaOrders, window._lastCostMap, _margenActiveStore);
+    renderMargenChart(window._lastMargenData);
+  }
 }
 
 function buildDailyMargen(ventaOrders, costMap, storeFilter){
@@ -1450,6 +1453,8 @@ function renderMargenChart(data){
 }
 
 function buildMargenUI(ventaOrders, costMap){
+  window._lastVentaOrders = ventaOrders;
+  window._lastCostMap = costMap;
   window._lastMargenData = buildDailyMargen(ventaOrders, costMap, _margenActiveStore);
   buildMargenTabs();
   renderMargenChart(window._lastMargenData);
