@@ -437,6 +437,42 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
   </div>
 
 </div>
+
+<!-- CLIENTES ACTIVOS 30/60 DÍAS -->
+<div style="margin-top:20px;margin-bottom:0">
+  <div class="panel">
+    <div class="ldr" id="lClientes"><div class="ring"></div></div>
+    <div class="ph">
+      <div class="ptitle" style="--ac:#ff9500"><div class="pdot" style="background:#ff9500;box-shadow:0 0 8px #ff9500"></div>Clientes Activos · Últimos 30 y 60 días</div>
+      <div class="pmeta"><div class="tag" id="clientesTag">WC REST</div></div>
+    </div>
+    <div class="pb">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+        <div style="background:rgba(255,149,0,.09);border:1px solid rgba(255,149,0,.25);border-radius:8px;padding:16px 20px">
+          <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Compradores únicos · 30 días</div>
+          <div id="kBuyers30" style="font-size:30px;font-weight:800;color:#ff9500;font-family:var(--fm);text-shadow:0 0 20px rgba(255,149,0,.4)">--</div>
+          <div id="kBuyers30foot" style="color:var(--txd);font-size:10px;margin-top:5px">--</div>
+        </div>
+        <div style="background:rgba(255,149,0,.05);border:1px solid rgba(255,149,0,.15);border-radius:8px;padding:16px 20px">
+          <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Compradores únicos · 60 días</div>
+          <div id="kBuyers60" style="font-size:30px;font-weight:800;color:#ffaa44;font-family:var(--fm);text-shadow:0 0 20px rgba(255,170,68,.3)">--</div>
+          <div id="kBuyers60foot" style="color:var(--txd);font-size:10px;margin-top:5px">--</div>
+        </div>
+        <div style="background:rgba(0,245,255,.09);border:1px solid rgba(0,245,255,.25);border-radius:8px;padding:16px 20px">
+          <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Tickets (órdenes) · 30 días</div>
+          <div id="kOrders30" style="font-size:30px;font-weight:800;color:var(--cy);font-family:var(--fm);text-shadow:0 0 20px rgba(0,245,255,.4)">--</div>
+          <div id="kOrders30foot" style="color:var(--txd);font-size:10px;margin-top:5px">--</div>
+        </div>
+        <div style="background:rgba(0,245,255,.05);border:1px solid rgba(0,245,255,.15);border-radius:8px;padding:16px 20px">
+          <div style="color:var(--txd);font-size:9px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Tickets (órdenes) · 60 días</div>
+          <div id="kOrders60" style="font-size:30px;font-weight:800;color:#00ccdd;font-family:var(--fm);text-shadow:0 0 20px rgba(0,200,220,.3)">--</div>
+          <div id="kOrders60foot" style="color:var(--txd);font-size:10px;margin-top:5px">--</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 </div><!-- /shell -->
 
 <script>
@@ -1118,6 +1154,7 @@ function parseWCOrder(o){
     dateCompleted:(o.date_completed||'').slice(0,10),
     storeId:      parseInt(meta['_pos_store_id'])||null,
     cashierId:    meta['_pos_cashier_id']||null,
+    customerId:   o.customer_id||null,
     isPOS:        !!meta['_created_via_pos'],
     hasCash, hasCard, hasTransfer,
     lineItems,
@@ -1202,6 +1239,45 @@ async function fetchWC(){
     console.warn('WooCommerce fetch error:', e);
     return null;
   }
+}
+
+// ══════════════════════════════════════════════════════
+//  CLIENTES ACTIVOS (30/60 días — fijos, independientes del rango)
+// ══════════════════════════════════════════════════════
+async function fetchClientStats(){
+  try{
+    const now = new Date();
+    const since60 = new Date(now - 60*86400000).toISOString().slice(0,10)+'T00:00:00';
+    const toNow   = now.toISOString().slice(0,10)+'T23:59:59';
+    const cutoff30 = new Date(now - 30*86400000);
+
+    const orders60 = await fetchWCPaged({ after: since60, before: toNow }, 30);
+    const orders30 = orders60.filter(o => o.dateCreated >= cutoff30.toISOString().slice(0,10));
+
+    const buyers60 = new Set(orders60.map(o=>o.customerId).filter(Boolean)).size;
+    const buyers30 = new Set(orders30.map(o=>o.customerId).filter(Boolean)).size;
+    const avg30 = buyers30 > 0 ? (orders30.length / buyers30).toFixed(1) : '0';
+    const avg60 = buyers60 > 0 ? (orders60.length / buyers60).toFixed(1) : '0';
+
+    return { buyers30, buyers60, orders30: orders30.length, orders60: orders60.length, avg30, avg60 };
+  }catch(e){
+    console.warn('fetchClientStats error:', e);
+    return null;
+  }
+}
+
+function renderClientStats(data){
+  document.getElementById('lClientes').classList.remove('on');
+  if(!data){ setTag('clientesTag','Error','err'); return; }
+  document.getElementById('kBuyers30').textContent  = fnum(data.buyers30);
+  document.getElementById('kBuyers30foot').textContent = `${data.avg30} compras/cliente · promedio`;
+  document.getElementById('kBuyers60').textContent  = fnum(data.buyers60);
+  document.getElementById('kBuyers60foot').textContent = `${data.avg60} compras/cliente · promedio`;
+  document.getElementById('kOrders30').textContent  = fnum(data.orders30);
+  document.getElementById('kOrders30foot').textContent = `${data.buyers30} compradores únicos`;
+  document.getElementById('kOrders60').textContent  = fnum(data.orders60);
+  document.getElementById('kOrders60foot').textContent = `${data.buyers60} compradores únicos`;
+  setTag('clientesTag','WC ✓','ok');
 }
 
 // ══════════════════════════════════════════════════════
@@ -1682,7 +1758,7 @@ function renderUsuarios(ventaOrders){
 // ══════════════════════════════════════════════════════
 async function refresh(){
   // loaders on
-  ['lChart','lCompras','lWoo','lPedidos','lMargen','lLive','lUsuarios'].forEach(id=>document.getElementById(id).classList.add('on'));
+  ['lChart','lCompras','lWoo','lPedidos','lMargen','lLive','lUsuarios','lClientes'].forEach(id=>document.getElementById(id).classList.add('on'));
   setTag('tLastUpd','Actualizando…');
 
   // ── 1. GOOGLE SHEETS ──
@@ -1771,6 +1847,10 @@ async function refresh(){
   }
   document.getElementById('lWoo').classList.remove('on');
   document.getElementById('lPedidos').classList.remove('on');
+
+  // ── CLIENTES ACTIVOS 30/60d ──
+  const clientStats = await fetchClientStats();
+  renderClientStats(clientStats);
 
   // ── TIMESTAMP ──
   setTag('tLastUpd', 'Act: '+new Date().toLocaleTimeString('es-MX',{hour12:false}));
