@@ -6,6 +6,7 @@
 <title>ModasNT — Dashboard Operacional</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root {
   --bg: #050508; --bg-p: #0a0b0f; --bg-c: #0f1016; --bg-c2: #13141b;
@@ -1169,6 +1170,10 @@ function parseWCOrder(o){
     quantity:   parseFloat(li.quantity)||1,
     total:      parseFloat(li.total)||0,
   }));
+  const bill = o.billing || {};
+  const billingName  = [bill.first_name||'', bill.last_name||''].join(' ').trim();
+  const billingPhone = bill.phone||'';
+  const billingEmail = bill.email||'';
   return {
     id:           o.id,
     status:       o.status,
@@ -1178,6 +1183,7 @@ function parseWCOrder(o){
     storeId:      parseInt(meta['_pos_store_id'])||null,
     cashierId:    meta['_pos_cashier_id']||null,
     customerId:   o.customer_id||null,
+    billingName, billingPhone, billingEmail,
     isPOS:        !!meta['_created_via_pos'],
     hasCash, hasCard, hasTransfer,
     lineItems,
@@ -1365,6 +1371,25 @@ async function fetchMensualStats(){
   // Traer todas las órdenes del año en curso
   const allOrders = await fetchWCPaged({ after: yearStart, before: toNow }, 50);
 
+  // Mapa de info de clientes: { customerId: {name, phone, email, total} }
+  const customerInfo = {};
+  allOrders.forEach(o => {
+    if(!o.customerId) return;
+    if(!customerInfo[o.customerId]){
+      customerInfo[o.customerId] = {
+        name:  o.billingName  || '',
+        phone: o.billingPhone || '',
+        email: o.billingEmail || '',
+        total: 0,
+      };
+    }
+    customerInfo[o.customerId].total += o.total;
+    // Completar nombre/teléfono si faltan
+    if(!customerInfo[o.customerId].name  && o.billingName)  customerInfo[o.customerId].name  = o.billingName;
+    if(!customerInfo[o.customerId].phone && o.billingPhone) customerInfo[o.customerId].phone = o.billingPhone;
+    if(!customerInfo[o.customerId].email && o.billingEmail) customerInfo[o.customerId].email = o.billingEmail;
+  });
+
   // Agrupar por mes: { '2026-01': Set<customerId> }
   const monthMap = {};
   const ordersByMonth = {};
@@ -1414,7 +1439,7 @@ async function fetchMensualStats(){
   });
 
   const capped = allOrders.length === 5000;
-  const data = { months: result, fetchedAt: new Date().toISOString(), capped, totalOrders: allOrders.length };
+  const data = { months: result, customerInfo, fetchedAt: new Date().toISOString(), capped, totalOrders: allOrders.length };
   localStorage.setItem(MENSUAL_KEY, JSON.stringify(data));
   return data;
 }
@@ -1517,29 +1542,121 @@ function exportMensualCSV(){
     const raw = localStorage.getItem(MENSUAL_KEY);
     if(!raw){ alert('Primero calculá el reporte'); return; }
     const data = JSON.parse(raw);
+    const months = data.months;
+    const ci = data.customerInfo || {};
+    const wb = XLSX.utils.book_new();
 
-    // Hoja 1: resumen mensual
-    let csv = 'Mes,Año-Mes,Compradores únicos,Tickets,Nuevos,Recurrentes,Regresaron,Se fueron\n';
-    data.months.forEach(m => {
-      csv += `"${m.label}",${m.ym},${m.unique},${m.orders},${m.nuevos},${m.recurrentes},${m.regresaron},${m.seFueron}\n`;
+    // ── PESTAÑA 1: Resumen mensual ─────────────────────
+    const hdr1 = ['Mes','Año-Mes','Compradores únicos','Tickets',
+                  'Nuevos','Recurrentes','Regresaron','Se fueron',
+                  '% Retención (vs mes ant.)','Tickets / Comprador'];
+    const rows1 = months.map((m,i) => {
+      const prev = months[i-1];
+      const ret  = prev && prev.unique > 0
+        ? Math.round(m.recurrentes / prev.unique * 100) + '%'
+        : '—';
+      const tpc  = m.unique > 0 ? (m.orders / m.unique).toFixed(1) : '—';
+      return [m.label, m.ym, m.unique, m.orders,
+              m.nuevos, m.recurrentes, m.regresaron, m.seFueron,
+              ret, tpc];
     });
+    const ws1 = XLSX.utils.aoa_to_sheet([hdr1, ...rows1]);
+    // Ancho de columnas
+    ws1['!cols'] = [20,10,18,10,10,13,13,15,22,18].map(w=>({wch:w}));
+    // Estilo encabezado (SheetJS community no soporta estilos pero sí freeze)
+    ws1['!freeze'] = {xSplit:0, ySplit:1};
+    XLSX.utils.book_append_sheet(wb, ws1, 'Resumen Mensual');
 
-    csv += '\n\nDetalle por comprador y mes (para análisis de churn)\n';
-    csv += 'Mes,Año-Mes,Customer ID\n';
-    data.months.forEach(m => {
-      m.buyerIds.forEach(id => {
-        csv += `"${m.label}",${m.ym},${id}\n`;
+    // ── PESTAÑA 2: Grilla cliente × mes ───────────────
+    // Filas: un cliente por fila. Columnas: un mes por columna.
+    const allIds = [...new Set(months.flatMap(m => m.buyerIds))];
+    const hdr2 = ['Customer ID','Nombre','Teléfono','Email','Total comprado ($)',
+                  ...months.map(m => m.label),
+                  'Meses activo','Primer mes','Último mes'];
+    const monthSets = months.map(m => new Set(m.buyerIds));
+
+    const rows2 = allIds.map(id => {
+      const info   = ci[id] || {};
+      const active = monthSets.map(s => s.has(id) ? 1 : 0);
+      const nActive = active.reduce((a,v)=>a+v, 0);
+      const firstIdx = active.indexOf(1);
+      const lastIdx  = active.lastIndexOf(1);
+      return [
+        id,
+        info.name  || '',
+        info.phone || '',
+        info.email || '',
+        Math.round(info.total || 0),
+        ...active,
+        nActive,
+        firstIdx >= 0 ? months[firstIdx].label : '',
+        lastIdx  >= 0 ? months[lastIdx].label  : '',
+      ];
+    });
+    const ws2 = XLSX.utils.aoa_to_sheet([hdr2, ...rows2]);
+    ws2['!cols'] = [12,22,14,26,18,
+                    ...months.map(()=>({wch:12})),
+                    12,14,14].map((v,i)=>typeof v==='number'?{wch:v}:v);
+    ws2['!freeze'] = {xSplit:5, ySplit:1};
+    XLSX.utils.book_append_sheet(wb, ws2, 'Clientes × Mes');
+
+    // ── PESTAÑA 3: Se fueron (mes más reciente) ───────
+    const lastM  = months[months.length - 1];
+    const prevM  = months[months.length - 2];
+    const hdr3   = ['Customer ID','Nombre','Teléfono','Email',
+                    'Total comprado año ($)','Último mes activo',
+                    `Compró en ${prevM?.label||'mes ant.'}`,
+                    `Compró en ${lastM?.label||'mes actual'}`,
+                    'Acción sugerida'];
+    const rows3  = [];
+    if(prevM && lastM){
+      const prevSet = new Set(prevM.buyerIds);
+      const lastSet = new Set(lastM.buyerIds);
+      prevSet.forEach(id => {
+        if(lastSet.has(id)) return; // sigue activo
+        const info   = ci[id] || {};
+        // último mes en que compró (puede ser más atrás)
+        let lastActive = prevM.label;
+        for(let i = months.length-1; i>=0; i--){
+          if(new Set(months[i].buyerIds).has(id)){ lastActive = months[i].label; break; }
+        }
+        rows3.push([
+          id,
+          info.name  || '',
+          info.phone || '',
+          info.email || '',
+          Math.round(info.total || 0),
+          lastActive,
+          'SÍ','NO',
+          'Llamar / enviar WhatsApp',
+        ]);
       });
-    });
+    }
+    // Ordenar por total comprado desc
+    rows3.sort((a,b) => b[4] - a[4]);
+    const ws3 = XLSX.utils.aoa_to_sheet([hdr3, ...rows3]);
+    ws3['!cols'] = [12,22,14,26,20,16,16,16,24].map(w=>({wch:w}));
+    ws3['!freeze'] = {xSplit:0, ySplit:1};
+    XLSX.utils.book_append_sheet(wb, ws3, `Se fueron (${lastM?.label||''})`);
 
-    const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url;
-    a.download = `ModasNT_Compradores_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }catch(e){ alert('Error al exportar: '+e.message); }
+    // ── PESTAÑA 4: Nuevos este mes ────────────────────
+    const hdr4  = ['Customer ID','Nombre','Teléfono','Email','Primera compra','Total ($)'];
+    const seenBefore = new Set(months.slice(0,-1).flatMap(m=>m.buyerIds));
+    const rows4 = (lastM?.buyerIds||[])
+      .filter(id => !seenBefore.has(id))
+      .map(id => {
+        const info = ci[id] || {};
+        return [id, info.name||'', info.phone||'', info.email||'', lastM.label, Math.round(info.total||0)];
+      })
+      .sort((a,b) => b[5] - a[5]);
+    const ws4 = XLSX.utils.aoa_to_sheet([hdr4, ...rows4]);
+    ws4['!cols'] = [12,22,14,26,14,12].map(w=>({wch:w}));
+    ws4['!freeze'] = {xSplit:0, ySplit:1};
+    XLSX.utils.book_append_sheet(wb, ws4, `Nuevos (${lastM?.label||''})`);
+
+    const fname = `ModasNT_Churn_${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
+  }catch(e){ alert('Error al exportar: '+e.message); console.error(e); }
 }
 
 function initMensualStats(){
