@@ -1252,21 +1252,42 @@ const CLIENT_STATS_KEY = 'mnt_client_stats_v1';
 async function fetchClientStats(){
   try{
     const now = new Date();
-    const since60 = new Date(now - 60*86400000).toISOString().slice(0,10)+'T00:00:00';
-    const toNow   = now.toISOString().slice(0,10)+'T23:59:59';
-    const cutoff30 = new Date(now - 30*86400000).toISOString().slice(0,10);
+    const pad = s => String(s).padStart(2,'0');
+    const fmtDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 
-    const orders60 = await fetchWCPaged({ after: since60, before: toNow }, 30);
-    const orders30 = orders60.filter(o => o.dateCreated >= cutoff30);
-    const buyers60 = new Set(orders60.map(o=>o.customerId).filter(Boolean)).size;
-    const buyers30 = new Set(orders30.map(o=>o.customerId).filter(Boolean)).size;
+    const d30ago = new Date(now - 30*86400000);
+    const d60ago = new Date(now - 60*86400000);
+
+    const since30 = fmtDate(d30ago)+'T00:00:00';
+    const since60 = fmtDate(d60ago)+'T00:00:00';
+    const before30 = fmtDate(d30ago)+'T23:59:59'; // cierre del día 30
+    const toNow   = fmtDate(now)+'T23:59:59';
+
+    // Dos queries independientes: últimos 30d y días 31-60
+    // Así cada período tiene su propio límite de páginas y no se mezclan
+    const [orders30, ordersMid] = await Promise.all([
+      fetchWCPaged({ after: since30, before: toNow },   25), // últimos 30d
+      fetchWCPaged({ after: since60, before: before30 }, 25), // días 31-60
+    ]);
+
+    const allOrders60 = [...orders30, ...ordersMid];
+
+    const buyerSet30 = new Set(orders30.map(o=>o.customerId).filter(Boolean));
+    const buyerSet60 = new Set(allOrders60.map(o=>o.customerId).filter(Boolean));
+
+    const buyers30 = buyerSet30.size;
+    const buyers60 = buyerSet60.size;
     const avg30 = buyers30 > 0 ? (orders30.length / buyers30).toFixed(1) : '0';
-    const avg60 = buyers60 > 0 ? (orders60.length / buyers60).toFixed(1) : '0';
+    const avg60 = buyers60 > 0 ? (allOrders60.length / buyers60).toFixed(1) : '0';
+
+    // Avisar si se alcanzó el límite de páginas (datos incompletos)
+    const capped30 = orders30.length === 2500;
+    const capped60 = ordersMid.length === 2500;
 
     const result = {
       buyers30, buyers60,
-      orders30: orders30.length, orders60: orders60.length,
-      avg30, avg60,
+      orders30: orders30.length, orders60: allOrders60.length,
+      avg30, avg60, capped30, capped60,
       fetchedAt: new Date().toISOString()
     };
     localStorage.setItem(CLIENT_STATS_KEY, JSON.stringify(result));
@@ -1301,7 +1322,8 @@ function renderClientStats(data, loading){
   const ts = data.fetchedAt
     ? new Date(data.fetchedAt).toLocaleString('es-MX',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})
     : '';
-  setTag('clientesTag', ts ? `Act: ${ts}` : 'WC ✓', 'ok');
+  const capped = data.capped30 || data.capped60;
+  setTag('clientesTag', ts ? `Act: ${ts}${capped?' ⚠ parcial':''}` : 'WC ✓', capped ? '' : 'ok');
 }
 
 async function refreshClientStats(){
