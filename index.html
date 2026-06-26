@@ -476,6 +476,26 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
   </div>
 </div>
 
+<!-- REPORTE MENSUAL DE COMPRADORES -->
+<div style="margin-top:20px;margin-bottom:0">
+  <div class="panel">
+    <div class="ldr" id="lMensual"><div class="ring"></div></div>
+    <div class="ph">
+      <div class="ptitle" style="--ac:#aa55ff"><div class="pdot" style="background:#aa55ff;box-shadow:0 0 8px #aa55ff"></div>Compradores únicos por mes · Crecimiento de base</div>
+      <div class="pmeta" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="tag" id="mensualTag">Sin calcular</div>
+        <button id="btnRefreshMensual" class="refresh-btn" onclick="refreshMensualStats()" style="font-size:10px;padding:5px 12px">↻ Calcular</button>
+        <button id="btnExportMensual" class="refresh-btn" onclick="exportMensualCSV()" style="font-size:10px;padding:5px 12px;display:none">↓ Exportar CSV</button>
+      </div>
+    </div>
+    <div class="pb" style="padding:0">
+      <div id="mensualContent" style="overflow-x:auto">
+        <div class="empty" style="margin:20px">Presioná "Calcular" para ver el reporte. Se guarda y no necesita recalcularse.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 </div><!-- /shell -->
 
 <script>
@@ -1332,6 +1352,209 @@ async function refreshClientStats(){
   renderClientStats(data, false);
 }
 
+// ══════════════════════════════════════════════════════
+//  REPORTE MENSUAL DE COMPRADORES
+// ══════════════════════════════════════════════════════
+const MENSUAL_KEY = 'mnt_mensual_stats_v1';
+
+async function fetchMensualStats(){
+  const now = new Date();
+  const yearStart = `${now.getFullYear()}-01-01T00:00:00`;
+  const toNow     = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}T23:59:59`;
+
+  // Traer todas las órdenes del año en curso
+  const allOrders = await fetchWCPaged({ after: yearStart, before: toNow }, 50);
+
+  // Agrupar por mes: { '2026-01': Set<customerId> }
+  const monthMap = {};
+  const ordersByMonth = {};
+  allOrders.forEach(o => {
+    const ym = o.dateCreated.slice(0,7); // "2026-01"
+    if(!monthMap[ym])     { monthMap[ym] = new Set(); ordersByMonth[ym] = 0; }
+    if(o.customerId)       monthMap[ym].add(o.customerId);
+    ordersByMonth[ym]++;
+  });
+
+  // Meses ordenados cronológicamente
+  const months = Object.keys(monthMap).sort();
+
+  // Calcular métricas
+  const seenEver = new Set(); // todos los compradores vistos hasta el mes anterior
+  const result = months.map((ym, idx) => {
+    const buyers   = monthMap[ym];
+    const prevYm   = months[idx - 1] || null;
+    const prevBuyers = prevYm ? monthMap[prevYm] : null;
+
+    let nuevos = 0, recurrentes = 0, regresaron = 0, seFueron = 0;
+    buyers.forEach(id => {
+      if(!seenEver.has(id))                nuevos++;
+      else if(prevBuyers && prevBuyers.has(id)) recurrentes++;
+      else                                 regresaron++;
+    });
+    // Churned: estaban en mes anterior pero no en este
+    if(prevBuyers){
+      prevBuyers.forEach(id => { if(!buyers.has(id)) seFueron++; });
+    }
+
+    // Actualizar vistos para el siguiente mes
+    buyers.forEach(id => seenEver.add(id));
+
+    const [yr, mo] = ym.split('-');
+    const label = new Date(parseInt(yr), parseInt(mo)-1, 1)
+      .toLocaleDateString('es-MX',{month:'long',year:'numeric'});
+
+    return {
+      ym, label,
+      unique: buyers.size,
+      orders: ordersByMonth[ym],
+      nuevos, recurrentes, regresaron, seFueron,
+      // guardamos los IDs para el export
+      buyerIds: [...buyers],
+    };
+  });
+
+  const capped = allOrders.length === 5000;
+  const data = { months: result, fetchedAt: new Date().toISOString(), capped, totalOrders: allOrders.length };
+  localStorage.setItem(MENSUAL_KEY, JSON.stringify(data));
+  return data;
+}
+
+const MES_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function renderMensualStats(data, loading){
+  const ldr = document.getElementById('lMensual');
+  const btn = document.getElementById('btnRefreshMensual');
+  const btnExp = document.getElementById('btnExportMensual');
+  if(loading){
+    ldr.classList.add('on');
+    if(btn){ btn.disabled=true; btn.textContent='Calculando…'; }
+    return;
+  }
+  ldr.classList.remove('on');
+  if(btn){ btn.disabled=false; btn.textContent='↻ Recalcular'; }
+
+  if(!data || !data.months || !data.months.length){
+    setTag('mensualTag','Error','err');
+    return;
+  }
+
+  if(btnExp) btnExp.style.display='';
+
+  const ts = new Date(data.fetchedAt).toLocaleString('es-MX',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false});
+  setTag('mensualTag', `Act: ${ts}${data.capped?' ⚠ parcial':''}`, data.capped?'':'ok');
+
+  // Tabla
+  const rows = data.months.map((m,i) => {
+    const prev = data.months[i-1];
+    const delta = prev ? m.unique - prev.unique : null;
+    const deltaHtml = delta === null ? '<span style="color:var(--txd)">—</span>'
+      : delta > 0 ? `<span class="up">+${delta}</span>`
+      : delta < 0 ? `<span class="dn">${delta}</span>`
+      : `<span style="color:var(--txd)">0</span>`;
+
+    // Mini barra proporcional
+    const maxU = Math.max(...data.months.map(x=>x.unique));
+    const pct  = maxU > 0 ? Math.round(m.unique / maxU * 100) : 0;
+
+    return `<tr>
+      <td style="font-size:12px;font-weight:700;min-width:130px">${m.label}</td>
+      <td style="min-width:180px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:6px;background:var(--bg-c2);border-radius:3px;min-width:80px">
+            <div style="width:${pct}%;height:100%;background:#aa55ff;border-radius:3px;box-shadow:0 0 6px #aa55ff55"></div>
+          </div>
+          <span style="font-family:var(--fm);font-weight:700;color:#aa55ff;min-width:36px;text-align:right">${m.unique}</span>
+        </div>
+      </td>
+      <td style="text-align:center">${deltaHtml}</td>
+      <td class="mo" style="text-align:right;color:var(--txd)">${m.orders}</td>
+      <td class="mo" style="text-align:right;color:var(--gn)">${m.nuevos}</td>
+      <td class="mo" style="text-align:right;color:var(--cy)">${m.recurrentes}</td>
+      <td class="mo" style="text-align:right;color:var(--yw)">${m.regresaron}</td>
+      <td class="mo" style="text-align:right;color:var(--mg)">${m.seFueron}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('mensualContent').innerHTML = `
+    <table class="tbl" style="min-width:700px">
+      <thead><tr>
+        <th>Mes</th>
+        <th>Compradores únicos</th>
+        <th style="text-align:center">vs mes anterior</th>
+        <th style="text-align:right">Tickets</th>
+        <th style="text-align:right" title="Primera compra en el año">🟢 Nuevos</th>
+        <th style="text-align:right" title="Compraron también el mes anterior">🔵 Recurrentes</th>
+        <th style="text-align:right" title="Compraron antes pero no el mes pasado">🟡 Regresaron</th>
+        <th style="text-align:right" title="Compraron el mes anterior pero no este">🔴 Se fueron</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="padding:12px 20px;font-family:var(--fm);font-size:9px;color:var(--txg);display:flex;gap:20px;flex-wrap:wrap">
+      <span>🟢 Nuevo = primera compra en el año</span>
+      <span>🔵 Recurrente = compró el mes anterior también</span>
+      <span>🟡 Regresó = compró antes pero saltó un mes</span>
+      <span>🔴 Se fue = compró el mes pasado pero no este</span>
+      <span style="margin-left:auto">${data.totalOrders} órdenes analizadas${data.capped?' (límite alcanzado)':''}</span>
+    </div>`;
+}
+
+async function refreshMensualStats(){
+  renderMensualStats(null, true);
+  try{
+    const data = await fetchMensualStats();
+    renderMensualStats(data, false);
+  }catch(e){
+    document.getElementById('lMensual').classList.remove('on');
+    const btn = document.getElementById('btnRefreshMensual');
+    if(btn){ btn.disabled=false; btn.textContent='↻ Calcular'; }
+    setTag('mensualTag','Error: '+e.message,'err');
+  }
+}
+
+function exportMensualCSV(){
+  try{
+    const raw = localStorage.getItem(MENSUAL_KEY);
+    if(!raw){ alert('Primero calculá el reporte'); return; }
+    const data = JSON.parse(raw);
+
+    // Hoja 1: resumen mensual
+    let csv = 'Mes,Año-Mes,Compradores únicos,Tickets,Nuevos,Recurrentes,Regresaron,Se fueron\n';
+    data.months.forEach(m => {
+      csv += `"${m.label}",${m.ym},${m.unique},${m.orders},${m.nuevos},${m.recurrentes},${m.regresaron},${m.seFueron}\n`;
+    });
+
+    csv += '\n\nDetalle por comprador y mes (para análisis de churn)\n';
+    csv += 'Mes,Año-Mes,Customer ID\n';
+    data.months.forEach(m => {
+      m.buyerIds.forEach(id => {
+        csv += `"${m.label}",${m.ym},${id}\n`;
+      });
+    });
+
+    const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `ModasNT_Compradores_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }catch(e){ alert('Error al exportar: '+e.message); }
+}
+
+function initMensualStats(){
+  try{
+    const cached = JSON.parse(localStorage.getItem(MENSUAL_KEY)||'null');
+    if(cached){
+      renderMensualStats(cached, false);
+    } else {
+      document.getElementById('lMensual').classList.remove('on');
+    }
+  }catch(e){
+    document.getElementById('lMensual').classList.remove('on');
+  }
+}
+
 function initClientStats(){
   try{
     const cached = JSON.parse(localStorage.getItem(CLIENT_STATS_KEY)||'null');
@@ -1923,6 +2146,7 @@ buildSucUI();
 buildPedidosUI();
 buildPedidosChart(null);
 initClientStats();
+initMensualStats();
 
 // default custom dates
 const today = new Date().toISOString().slice(0,10);
