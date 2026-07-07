@@ -1057,7 +1057,7 @@ async function fetchSheet(){
     const deudas = [];
     jsonD.table.rows.forEach(r=>{
       if(!r.c || !r.c[0]?.v) return;
-      const toN = v => parseFloat(String(v||0).replace(/\./g,'').replace(',','.')) || 0;
+      const toN = v => { if(typeof v==='number') return v; return parseFloat(String(v||0).replace(/\./g,'').replace(',','.')) || 0; };
       deudas.push({
         proveedor:           String(r.c[0]?.v||'').trim(),
         deuda_inicial:       toN(r.c[1]?.v),
