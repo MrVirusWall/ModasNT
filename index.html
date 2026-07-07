@@ -421,6 +421,34 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
     </div>
   </div>
 
+  <!-- DEUDAS PROVEEDORES -->
+  <div class="panel">
+    <div class="ldr" id="lDeudas"><div class="ring"></div></div>
+    <div class="ph">
+      <div class="ptitle" style="--ac:var(--or)"><div class="pdot" style="background:var(--or);box-shadow:0 0 8px var(--or)"></div>Deudas a Proveedores</div>
+      <div class="pmeta"><div class="tag" id="tDeudas">Sheet</div></div>
+    </div>
+    <div class="pb">
+      <div style="display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap">
+        <div>
+          <div class="kpi-lbl">Deuda Total</div>
+          <div class="kpi-val" id="kDeudaTotal" style="color:var(--or)"><sup>$</sup>—</div>
+        </div>
+        <div>
+          <div class="kpi-lbl">Proveedores</div>
+          <div class="kpi-val" id="kDeudaCount" style="font-size:2rem">—</div>
+        </div>
+        <div>
+          <div class="kpi-lbl">Pagado</div>
+          <div class="kpi-val" id="kDeudaPagado" style="color:var(--gn);font-size:2rem">—%</div>
+        </div>
+      </div>
+      <div id="deudaCards" style="display:flex;flex-direction:column;gap:10px">
+        <div class="empty">Cargando…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- PEDIDOS WOOCOMMERCE -->
   <div class="panel">
     <div class="ldr" id="lWoo"><div class="ring"></div></div>
@@ -1021,7 +1049,24 @@ async function fetchSheet(){
       .filter(g => g.proveedor) // descartar filas vacías/basura sin proveedor
       .map(g => ({ ...g, total: g.total || g.items.reduce((a,i)=>a+(i.subtotal||0),0) }));
 
-    return { facturas, estados: estadosFinales, source:'live' };
+    // Fetch tab deudas — estado de deuda por proveedor
+    const urlD = `https://docs.google.com/spreadsheets/d/${cfg.sheet_id}/gviz/tq?tqx=out:json&sheet=deudas&t=${_ts}`;
+    const resD = await fetch(urlD, {cache:'no-cache'});
+    const txtD = await resD.text();
+    const jsonD = JSON.parse(txtD.match(/setResponse\(([\s\S]*)\)/)[1]);
+    const deudas = [];
+    jsonD.table.rows.forEach(r=>{
+      if(!r.c || !r.c[0]?.v) return;
+      const toN = v => parseFloat(String(v||0).replace(/\./g,'').replace(',','.')) || 0;
+      deudas.push({
+        proveedor:           String(r.c[0]?.v||'').trim(),
+        deuda_inicial:       toN(r.c[1]?.v),
+        deuda_actual:        toN(r.c[2]?.v),
+        ultima_actualizacion:r.c[3]?.v||'',
+      });
+    });
+
+    return { facturas, estados: estadosFinales, deudas, source:'live' };
   }catch(e){
     console.warn('Sheet fetch error:', e);
     return { facturas: SHEET_FACTURAS_STATIC, estados: SHEET_ESTADOS_STATIC, source:'static' };
@@ -2053,6 +2098,55 @@ function buildKommoDonut(stages){
 }
 
 // ══════════════════════════════════════════════════════
+//  RENDER DEUDAS
+// ══════════════════════════════════════════════════════
+function renderDeudas(sheetData){
+  document.getElementById('lDeudas').classList.remove('on');
+  const deudas = (sheetData.deudas || []).filter(d => d.proveedor);
+  if(!deudas.length){
+    document.getElementById('deudaCards').innerHTML = '<div class="empty">Sin datos de deudas</div>';
+    document.getElementById('kDeudaTotal').innerHTML = '<sup>$</sup>0';
+    document.getElementById('kDeudaCount').textContent = '0';
+    document.getElementById('kDeudaPagado').textContent = '—%';
+    setTag('tDeudas','Sin datos','');
+    return;
+  }
+
+  const totalInicial = deudas.reduce((a,d)=>a+d.deuda_inicial,0);
+  const totalActual  = deudas.reduce((a,d)=>a+d.deuda_actual,0);
+  const pctPagado    = totalInicial>0 ? Math.round((1 - totalActual/totalInicial)*100) : 0;
+
+  document.getElementById('kDeudaTotal').innerHTML  = `<sup>$</sup>${fcomp(totalActual)}`;
+  document.getElementById('kDeudaCount').textContent = deudas.length;
+  document.getElementById('kDeudaPagado').textContent = `${pctPagado}%`;
+
+  const cards = deudas.map(d=>{
+    const pct     = d.deuda_inicial>0 ? Math.round((d.deuda_actual/d.deuda_inicial)*100) : 0;
+    const pagado  = d.deuda_inicial - d.deuda_actual;
+    const color   = pct===0 ? 'var(--gn)' : pct<50 ? 'var(--yw)' : 'var(--or)';
+    const label   = pct===0 ? '✓ Saldado' : pct<50 ? 'Parcial' : 'Pendiente';
+    return `
+    <div style="background:var(--bg-c2);border:1px solid var(--bd);border-radius:8px;padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-weight:600;color:var(--tx);font-size:.9rem">${d.proveedor}</div>
+        <div style="font-size:.75rem;color:${color};font-weight:600;background:${color}22;padding:2px 8px;border-radius:4px">${label}</div>
+      </div>
+      <div style="background:var(--bd);border-radius:4px;height:6px;margin-bottom:8px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${color};border-radius:4px;transition:width .4s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--txd)">
+        <span>Deuda actual: <b style="color:${color}">${fmxn(d.deuda_actual)}</b></span>
+        <span>Pagado: <b style="color:var(--gn)">${fmxn(pagado)}</b></span>
+        <span style="color:var(--txg)">Upd: ${d.ultima_actualizacion||'—'}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('deudaCards').innerHTML = cards;
+  setTag('tDeudas', `${deudas.length} proveedores · $${fcomp(totalActual)} pendiente`, totalActual===0?'ok':'');
+}
+
+// ══════════════════════════════════════════════════════
 //  RENDER COMPRAS
 // ══════════════════════════════════════════════════════
 function renderCompras(sheetData){
@@ -2219,13 +2313,14 @@ function renderUsuarios(ventaOrders){
 // ══════════════════════════════════════════════════════
 async function refresh(){
   // loaders on
-  ['lChart','lCompras','lWoo','lPedidos','lMargen','lLive','lUsuarios'].forEach(id=>document.getElementById(id).classList.add('on'));
+  ['lChart','lCompras','lDeudas','lWoo','lPedidos','lMargen','lLive','lUsuarios'].forEach(id=>document.getElementById(id).classList.add('on'));
   setTag('tLastUpd','Actualizando…');
 
   // ── 1. GOOGLE SHEETS ──
   const sheetData = await fetchSheet();
   window._lastSheetData = sheetData;
   renderCompras(sheetData);
+  renderDeudas(sheetData);
   setTag('tSheet', sheetData.source==='live'?'Sheet ✓':'Sheet (estático)', sheetData.source==='live'?'ok':'');
   dbg('Google Sheets', sheetData.source==='live'?'ok':'warn',
     sheetData.source==='live'
