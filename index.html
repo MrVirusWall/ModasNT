@@ -71,6 +71,16 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
 .kpi-foot{font-family:var(--fm);font-size:10px;color:var(--txd);margin-top:6px}
 .up{color:var(--gn)} .dn{color:var(--mg)}
 
+/* KPI POR SUCURSAL */
+.store-kpis-row{display:flex;gap:12px;margin-bottom:26px;overflow-x:auto;padding-bottom:4px}
+.store-kpis-row::-webkit-scrollbar{height:4px}.store-kpis-row::-webkit-scrollbar-thumb{background:var(--bd);border-radius:4px}
+.store-card{background:var(--bg-c);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;min-width:180px;flex:0 0 180px;position:relative;overflow:hidden}
+.store-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--sc,var(--cy));box-shadow:0 0 10px var(--sc,var(--cy))}
+.store-card-name{font-family:var(--fm);font-size:9px;letter-spacing:1.5px;color:var(--sc,var(--cy));text-transform:uppercase;margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.store-kpi-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px}
+.store-kpi-lbl{font-family:var(--fm);font-size:8px;letter-spacing:1px;color:var(--txd);text-transform:uppercase}
+.store-kpi-val{font-size:13px;font-weight:800;color:var(--tx);letter-spacing:-.5px}
+
 /* GRID */
 .grid2{display:grid;grid-template-columns:1fr 400px;gap:20px;margin-bottom:20px}
 .grid2b{display:grid;grid-template-columns:1fr 1fr;gap:20px}
@@ -330,6 +340,9 @@ header{display:flex;align-items:center;justify-content:space-between;padding:22p
     <div class="kpi-foot" id="kInvHoyFoot">productos nuevos · según período</div>
   </div>
 </div>
+
+<!-- KPI POR SUCURSAL -->
+<div class="store-kpis-row" id="storeKpisRow"></div>
 
 <!-- MAIN GRID -->
 <div class="grid2">
@@ -701,6 +714,27 @@ function tick(){
 tick(); setInterval(tick,1000);
 
 function fmxn(n){ return new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN',maximumFractionDigits:0}).format(n||0); }
+
+const STORE_COLORS = {1:'#00f5ff',2:'#ff00aa',3:'#00ff88',5:'#ffcc00',6:'#ff6644',7:'#aa55ff'};
+const STORE_NAMES_MAP = {1:'Bodega',2:'Barrio Alto',3:'Zona Escolar',5:'La Presa',6:'Barrio Bajo',7:'Bodega TikTok'};
+function renderStoreKpis(byStore){
+  const row = document.getElementById('storeKpisRow');
+  if(!row) return;
+  const order = [1,3,5,6,7,2]; // Bodega primero, luego tiendas, Barrio Alto al final
+  const map = {};
+  (byStore||[]).forEach(s=>{ map[s.id]=s; });
+  row.innerHTML = order.map(id=>{
+    const s = map[id]||{ventas:0,cobranzas:0,pedidos:0};
+    const clr = STORE_COLORS[id]||'var(--cy)';
+    const name = STORE_NAMES_MAP[id]||`Tienda ${id}`;
+    return `<div class="store-card" style="--sc:${clr}">
+      <div class="store-card-name">${name}</div>
+      <div class="store-kpi-row"><span class="store-kpi-lbl">Ventas</span><span class="store-kpi-val" style="color:${clr}">${fmxn(s.ventas||0)}</span></div>
+      <div class="store-kpi-row"><span class="store-kpi-lbl">Cobranzas</span><span class="store-kpi-val" style="color:var(--cy)">${fmxn(s.cobranzas||0)}</span></div>
+      <div class="store-kpi-row"><span class="store-kpi-lbl">Pedidos</span><span class="store-kpi-val">${s.pedidos||0}</span></div>
+    </div>`;
+  }).join('');
+}
 function fnum(n){ return new Intl.NumberFormat('es-MX').format(n||0); }
 function fcomp(n){ return new Intl.NumberFormat('es-MX',{notation:'compact',maximumFractionDigits:1}).format(n||0); }
 
@@ -2370,6 +2404,7 @@ async function refresh(){
       `${wcRaw.totalConciliados} conciliados · ${wcRaw.ventaOrders.filter(o=>o.hasTransfer&&o.status==='processing').length} pend. Charly`;
 
     // Live vs Normal + ventas por usuario
+    renderStoreKpis(wcRaw.byStore);
     renderLiveData(liveData, wcRaw.totalVentas);
     await fetchCashierNames(wcRaw.ventaOrders.map(o=>o.cashierId));
     renderUsuarios(wcRaw.ventaOrders);
